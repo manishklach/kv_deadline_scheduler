@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .adapters import generate_mock_vllm_trace
 from .metrics import SWEEP_COLUMNS, compare_results, write_sweep_csv
 from .simulator import KVMemorySimulator, WorkloadProfile, generate_synthetic_kv_workload, policy_from_name
 from .trace import IntentTraceRecorder
@@ -73,6 +74,18 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["balanced", "deadline_pressure", "rag_mixed_priority", "speculative_decode", "long_context_extreme"],
         default="balanced",
     )
+
+    mock_vllm = subparsers.add_parser(
+        "mock-vllm",
+        help="Generate a passive vLLM-style KV lifecycle trace.",
+        description="Generate a mock vLLM-style JSONL trace through the passive adapter and optionally compare policies on it.",
+    )
+    mock_vllm.add_argument("--out", required=True, help="Output JSONL trace path.")
+    mock_vllm.add_argument("--requests", type=int, default=8)
+    mock_vllm.add_argument("--decode-steps", type=int, default=128)
+    mock_vllm.add_argument("--compare", action="store_true")
+    mock_vllm.add_argument("--hbm-mb", type=int, default=128)
+    mock_vllm.add_argument("--dram-mb", type=int, default=2048)
 
     sweep = subparsers.add_parser(
         "sweep",
@@ -256,6 +269,30 @@ def main() -> None:
         print(compare_results(results))
         print()
         print(_demo_decision_example(trace))
+        return
+
+    if args.command == "mock-vllm":
+        trace = generate_mock_vllm_trace(num_requests=args.requests, decode_steps=args.decode_steps)
+        trace.to_jsonl(args.out)
+        summary = trace.summary()
+        print(f"Generated mock vLLM trace: {args.out}")
+        print(f"Events: {summary['total_events']}")
+        print(f"Unique KV blocks: {summary['total_unique_blocks']}")
+        print(f"Decode-critical bytes: {summary['decode_critical_bytes']}")
+        print()
+        print(trace.print_summary())
+        if args.compare:
+            print()
+            print("Running policy comparison...")
+            typed_results = []
+            for policy_name in POLICY_ORDER:
+                simulator = KVMemorySimulator(
+                    policy=policy_from_name(policy_name),
+                    hbm_capacity_bytes=_mb_to_bytes(args.hbm_mb),
+                    dram_capacity_bytes=_mb_to_bytes(args.dram_mb),
+                )
+                typed_results.append(simulator.run(trace.events))
+            print(compare_results(typed_results))
         return
 
     if args.command == "sweep":

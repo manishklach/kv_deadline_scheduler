@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "kv-memory-intent"
+name = "kv-deadline-scheduler"
 version = "0.1.0"
 description = "Runtime-declared memory intent for KV-cache orchestration."
 readme = "README.md"

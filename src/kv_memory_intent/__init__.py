@@ -1,5 +1,6 @@
 """KV Deadline Scheduler research prototype."""
 
+from .adapters import VLLMIntentAdapter, generate_mock_vllm_trace
 from .events import MemoryIntentEvent
 from .metrics import compare_results, format_bytes, percentile, write_sweep_csv
 from .policies import (
@@ -31,10 +32,12 @@ __all__ = [
     "PredictiveHotnessPolicy",
     "SimulationResult",
     "Tier",
+    "VLLMIntentAdapter",
     "WorkloadProfile",
     "compare_results",
     "format_bytes",
     "generate_synthetic_kv_workload",
+    "generate_mock_vllm_trace",
     "percentile",
     "write_sweep_csv",
 ]

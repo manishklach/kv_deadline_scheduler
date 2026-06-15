@@ -90,6 +90,26 @@ pip install matplotlib
 python examples/plot_sweep_results.py sweep.csv --out docs/results/
 ```
 
+## Passive vLLM Trace Adapter
+
+The next step toward real-runtime integration is passive tracing.
+
+`KV Deadline Scheduler` includes a vLLM-style adapter skeleton that maps KV block lifecycle events into `MemoryIntentEvent` JSONL traces without importing or modifying vLLM.
+
+This lets the project move from synthetic traces to real-runtime traces in stages:
+
+1. mock vLLM-like traces,
+2. passive vLLM hooks,
+3. offline replay,
+4. advisory scheduling,
+5. eventual actuation.
+
+Quickstart:
+
+```bash
+kvmi mock-vllm --out mock_vllm_trace.jsonl --requests 16 --decode-steps 256 --compare --hbm-mb 128 --dram-mb 2048
+```
+
 ## Workload Profiles
 
 - `balanced`: general-purpose default.
