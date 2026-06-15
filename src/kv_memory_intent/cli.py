@@ -3,19 +3,71 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 from pathlib import Path
 
 from .adapters import generate_mock_vllm_trace
+from .events import MemoryIntentEvent
+from .kv_estimator import MODEL_PRESETS, ModelKVConfig, estimate_request_kv_bytes, kv_bytes_per_token
 from .metrics import SWEEP_COLUMNS, compare_results, write_sweep_csv
+from .request_trace import load_request_trace
 from .simulator import KVMemorySimulator, WorkloadProfile, generate_synthetic_kv_workload, policy_from_name
 from .trace import IntentTraceRecorder
+from .trace_importer import request_trace_to_intent_events
 
 POLICY_ORDER = ("lru", "hotcold", "predictive", "intent", "deadline")
 
 
 def _mb_to_bytes(value: int) -> int:
     return value * 1024 * 1024
+
+
+def _format_bytes_decimal(num_bytes: int) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+    value = float(num_bytes)
+    for unit in units:
+        if value < 1000.0 or unit == units[-1]:
+            return f"{value:.2f} {unit}"
+        value /= 1000.0
+    return f"{value:.2f} TB"
+
+
+def _clone_model_config(config: ModelKVConfig) -> ModelKVConfig:
+    return ModelKVConfig(**asdict(config))
+
+
+def _resolve_model_config(args: argparse.Namespace) -> ModelKVConfig:
+    if args.model:
+        if args.model not in MODEL_PRESETS:
+            raise ValueError(f"unknown model preset: {args.model}")
+        preset = MODEL_PRESETS[args.model]
+        if all(
+            getattr(args, field, None) is None
+            for field in ("num_layers", "hidden_size", "num_attention_heads", "num_kv_heads", "head_dim")
+        ) and getattr(args, "dtype_bytes", 2) == 2:
+            return _clone_model_config(preset)
+
+    required = {
+        "num_layers": args.num_layers,
+        "hidden_size": args.hidden_size,
+        "num_attention_heads": args.num_attention_heads,
+    }
+    missing = [name for name, value in required.items() if value is None]
+    if missing:
+        raise ValueError(
+            "manual model config requires --num-layers, --hidden-size, and --num-attention-heads "
+            f"(missing: {', '.join(missing)})"
+        )
+    return ModelKVConfig(
+        model_name=args.model or "custom",
+        num_layers=args.num_layers,
+        hidden_size=args.hidden_size,
+        num_attention_heads=args.num_attention_heads,
+        num_kv_heads=args.num_kv_heads,
+        head_dim=args.head_dim,
+        dtype_bytes=args.dtype_bytes or 2,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -64,6 +116,15 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--dram-mb", type=int, default=4096)
     compare.add_argument("--decision-log-dir", help="Optional directory for per-policy decision logs.")
 
+    inspect = subparsers.add_parser(
+        "inspect",
+        help="Inspect an imported or synthetic intent trace.",
+        description="Print a trace summary and optionally show the first few MemoryIntentEvent records.",
+    )
+    inspect.add_argument("--trace", required=True)
+    inspect.add_argument("--head", type=int, default=0)
+    inspect.add_argument("--json", action="store_true")
+
     demo = subparsers.add_parser(
         "demo",
         help="Run the default KV Deadline Scheduler demo.",
@@ -86,6 +147,35 @@ def build_parser() -> argparse.ArgumentParser:
     mock_vllm.add_argument("--compare", action="store_true")
     mock_vllm.add_argument("--hbm-mb", type=int, default=128)
     mock_vllm.add_argument("--dram-mb", type=int, default=2048)
+
+    estimate = subparsers.add_parser(
+        "estimate-kv",
+        help="Estimate KV footprint from model config and token counts.",
+        description="Estimate approximate KV bytes per token and per request from a model preset or manual model configuration.",
+    )
+    estimate.add_argument("--model")
+    estimate.add_argument("--num-layers", type=int)
+    estimate.add_argument("--hidden-size", type=int)
+    estimate.add_argument("--num-attention-heads", type=int)
+    estimate.add_argument("--num-kv-heads", type=int)
+    estimate.add_argument("--head-dim", type=int)
+    estimate.add_argument("--dtype-bytes", type=int, default=2)
+    estimate.add_argument("--prompt-tokens", type=int, required=True)
+    estimate.add_argument("--generated-tokens", type=int, required=True)
+    estimate.add_argument("--batch-size", type=int, default=1)
+    estimate.add_argument("--json", action="store_true")
+
+    import_trace = subparsers.add_parser(
+        "import-request-trace",
+        help="Import an external request trace into an intent-event trace.",
+        description="Load external request logs, estimate KV footprint from model config, reconstruct approximate KV lifecycle events, and write MemoryIntentEvent JSONL.",
+    )
+    import_trace.add_argument("--requests", required=True)
+    import_trace.add_argument("--out", required=True)
+    import_trace.add_argument("--model", required=True)
+    import_trace.add_argument("--logical-block-mb", type=int, default=1)
+    import_trace.add_argument("--max-blocks-per-request", type=int, default=256)
+    import_trace.add_argument("--json", action="store_true")
 
     sweep = subparsers.add_parser(
         "sweep",
@@ -126,6 +216,13 @@ def _result_markdown(result: dict[str, object]) -> str:
     lines = ["## Simulation Result", ""]
     for key, value in result.items():
         lines.append(f"- {key}: {value}")
+    return "\n".join(lines)
+
+
+def _inspect_head(events: list[MemoryIntentEvent], count: int) -> str:
+    lines = ["## Trace Head", ""]
+    for event in events[:count]:
+        lines.append(json.dumps(event.to_dict(), sort_keys=True))
     return "\n".join(lines)
 
 
@@ -254,6 +351,20 @@ def main() -> None:
         print(compare_results(typed_results))
         return
 
+    if args.command == "inspect":
+        trace = IntentTraceRecorder.from_jsonl(args.trace)
+        if args.json:
+            payload: dict[str, object] = {"summary": trace.summary()}
+            if args.head:
+                payload["head"] = [event.to_dict() for event in trace.events[: args.head]]
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(trace.print_summary())
+            if args.head:
+                print()
+                print(_inspect_head(trace.events, args.head))
+        return
+
     if args.command == "demo":
         trace = _default_trace(args.profile)
         print(trace.print_summary())
@@ -293,6 +404,60 @@ def main() -> None:
                 )
                 typed_results.append(simulator.run(trace.events))
             print(compare_results(typed_results))
+        return
+
+    if args.command == "estimate-kv":
+        config = _resolve_model_config(args)
+        per_token = kv_bytes_per_token(config)
+        request_kv = estimate_request_kv_bytes(config, args.prompt_tokens, args.generated_tokens)
+        batch_kv = request_kv * args.batch_size
+        result = {
+            "model_name": config.model_name,
+            "approx_kv_bytes_per_token": per_token,
+            "approx_request_kv_bytes": request_kv,
+            "approx_batch_kv_bytes": batch_kv,
+            "prompt_tokens": args.prompt_tokens,
+            "generated_tokens": args.generated_tokens,
+            "batch_size": args.batch_size,
+            "note": "Estimated from model configuration. Results are approximate.",
+        }
+        if args.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(f"Approx KV per token: {_format_bytes_decimal(per_token)}")
+            print(f"Approx request KV: {_format_bytes_decimal(request_kv)}")
+            print(f"Approx batch KV: {_format_bytes_decimal(batch_kv)}")
+            print("Note: estimate/simulation only, not a direct runtime measurement.")
+        return
+
+    if args.command == "import-request-trace":
+        request_records = load_request_trace(args.requests)
+        config = _clone_model_config(MODEL_PRESETS[args.model])
+        events = request_trace_to_intent_events(
+            request_records,
+            config,
+            block_size_bytes=args.logical_block_mb * 1024 * 1024,
+            max_blocks_per_request=args.max_blocks_per_request,
+        )
+        recorder = IntentTraceRecorder()
+        recorder.extend(events)
+        recorder.to_jsonl(args.out)
+        payload = {
+            "request_records": len(request_records),
+            "intent_events": len(events),
+            "output": args.out,
+            "note": "Imported traces are approximate reconstructions from external request logs.",
+            "summary": recorder.summary(),
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print("Imported external request trace into approximate MemoryIntentEvent JSONL.")
+            print("Warning: imported traces are approximate and simulator-based.")
+            print(f"Input requests: {len(request_records)}")
+            print(f"Output trace: {args.out}")
+            print()
+            print(recorder.print_summary())
         return
 
     if args.command == "sweep":

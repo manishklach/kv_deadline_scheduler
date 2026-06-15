@@ -4,7 +4,7 @@ This repository is intentionally modest in scope. It is a simulator-first protot
 
 ## Relevant Areas
 
-- vLLM and PagedAttention
+- serving systems such as vLLM and PagedAttention-derived approaches
 - KV-cache offload systems
 - LMCache-style KV reuse and offload approaches
 - vAttention-style virtual memory approaches

@@ -2,7 +2,7 @@
 
 ## Problem Statement
 
-KV-cache pressure in long-context inference is not just a capacity problem. It is also a semantics problem. The runtime knows which blocks are decode-critical, low priority, draft-only, reusable, or close to a deadline. Lower memory tiers often do not.
+KV-cache pressure in long-context inference is not just a capacity problem. It is also a semantics problem. Serving traces, request logs, token counts, and optional telemetry can reveal which reconstructed blocks are decode-critical, low priority, reusable, or close to a deadline. Lower memory tiers often do not.
 
 This prototype explores an observability-first path where the runtime emits intent at the KV block lifecycle level, and an offline policy engine replays that trace to test smarter placement strategies.
 
@@ -28,7 +28,7 @@ Metrics and comparison
 
 ### Runtime Intent Emitter
 
-The emitter is represented here by a synthetic workload generator, but the conceptual source is a runtime such as vLLM. It emits semantic state about each KV block across allocation, access, decode, commit, prefetch, and free events.
+The emitter is represented here by synthetic generators and external trace importers. In later stages, optional passive instrumentation may emit richer lifecycle data, but the current path does not require runtime modification.
 
 ### Intent Trace Recorder
 

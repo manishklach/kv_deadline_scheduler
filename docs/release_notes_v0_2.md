@@ -9,14 +9,14 @@ This release continues the deadline-aware project rebranding around the public n
 - Added HBM sweep tooling for capacity sensitivity experiments.
 - Added optional plotting for sweep outputs.
 - Added workload profiles for balanced, deadline-pressure, mixed-priority, speculative, and long-context-heavy traces.
-- Added a passive vLLM-style adapter that maps KV lifecycle signals into `MemoryIntentEvent` JSONL traces without importing or modifying vLLM.
-- Added mock vLLM trace generation and replay through the existing simulator.
+- Added a passive serving-trace adapter that can represent vLLM-style lifecycle signals without importing or modifying vLLM.
+- Added mock serving-trace generation and replay through the existing simulator.
 
 ## Limitations
 
 - Results remain simulated.
 - This is still a research prototype.
-- The passive adapter does not change vLLM scheduling behavior.
+- The passive adapter does not change serving-system scheduling behavior.
 - There is still no real GPU memory actuation.
 - There is still no production CXL or NVMe backend.
-- There are still no claims of production vLLM speedups.
+- There are still no claims of production serving speedups.

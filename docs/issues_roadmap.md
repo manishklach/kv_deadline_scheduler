@@ -1,10 +1,21 @@
 # Issues Roadmap
 
-1. Add vLLM passive trace adapter.
-2. Map vLLM block lifecycle to `MemoryIntentEvent`.
-3. Replay real vLLM traces offline.
-4. Add advisory mode.
-5. Add LMCache-style offload backend mock.
-6. Add TensorRT-LLM integration notes.
-7. Add real benchmark harness.
-8. Add p99 latency chart from a real serving run.
+Completed:
+
+1. Synthetic simulator.
+2. Policy ladder.
+3. Mock serving trace generation.
+4. External request trace importer.
+
+Next:
+
+1. Add adapters for common serving logs.
+2. Import OpenAI-compatible proxy logs.
+3. Ingest Prometheus GPU memory telemetry.
+4. Calibrate simulator against real p99 token latency.
+5. Add advisory scheduler.
+6. Actuation later.
+
+Optional future:
+
+1. Passive runtime instrumentation for users who control their serving stack.
