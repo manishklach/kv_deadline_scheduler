@@ -1,0 +1,9 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.coverage
+trace.jsonl
+examples/synthetic_trace.jsonl
