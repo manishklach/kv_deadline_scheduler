@@ -5,5 +5,6 @@ __pycache__/
 *.pyd
 *.egg-info/
 .coverage
-trace.jsonl
-examples/synthetic_trace.jsonl
+*.jsonl
+sweep.csv
+docs/results/*.png

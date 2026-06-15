@@ -2,11 +2,29 @@
 
 from __future__ import annotations
 
+import csv
 from math import floor
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .simulator import SimulationResult
+
+
+SWEEP_COLUMNS = [
+    "policy",
+    "hbm_mb",
+    "p50_latency_us",
+    "p95_latency_us",
+    "p99_latency_us",
+    "total_misses",
+    "decode_critical_misses",
+    "evictions",
+    "decode_critical_evictions",
+    "spills",
+    "prefetches",
+    "hbm_bytes_saved",
+]
 
 
 def percentile(values: list[int | float], p: float) -> float:
@@ -48,17 +66,17 @@ def compare_results(results: list["SimulationResult"]) -> str:
     separator = "|" + "|".join(["---"] * 13) + "|"
     rows = [header, separator]
     for result in results:
-        if baseline.p99_latency_us:
-            p99_improvement = ((baseline.p99_latency_us - result.p99_latency_us) / baseline.p99_latency_us) * 100.0
-        else:
-            p99_improvement = 0.0
-        if baseline.decode_critical_misses:
-            miss_reduction = (
-                (baseline.decode_critical_misses - result.decode_critical_misses)
-                / baseline.decode_critical_misses
-            ) * 100.0
-        else:
-            miss_reduction = 0.0
+        p99_improvement = (
+            ((baseline.p99_latency_us - result.p99_latency_us) / baseline.p99_latency_us) * 100.0
+            if baseline.p99_latency_us
+            else 0.0
+        )
+        miss_reduction = (
+            ((baseline.decode_critical_misses - result.decode_critical_misses) / baseline.decode_critical_misses)
+            * 100.0
+            if baseline.decode_critical_misses
+            else 0.0
+        )
         rows.append(
             "| "
             + " | ".join(
@@ -81,3 +99,13 @@ def compare_results(results: list["SimulationResult"]) -> str:
             + " |"
         )
     return "\n".join(rows)
+
+
+def write_sweep_csv(rows: list[dict[str, object]], path: str | Path) -> None:
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=SWEEP_COLUMNS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)

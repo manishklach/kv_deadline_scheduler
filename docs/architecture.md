@@ -36,11 +36,13 @@ The recorder stores JSONL traces of `MemoryIntentEvent` objects. These traces ar
 
 ### Policy Engine
 
-The policy layer compares three behaviors:
+The policy layer compares five behaviors:
 
 - `LRU`: page-like recency without semantics
+- `HotCold`: generic access-based hot/cold tracking
+- `PredictiveHotness`: access-based hotness with reuse-window inference
 - `IntentAware`: protects pinned or decode-critical blocks and prefers eviction of cold low-priority blocks
-- `DeadlineAware`: extends intent-aware behavior with deadline protection and simple prefetch logic
+- `KVDeadline`: extends intent-aware behavior with explicit deadline, slack, and request-priority protection
 
 ### Tier Simulator
 

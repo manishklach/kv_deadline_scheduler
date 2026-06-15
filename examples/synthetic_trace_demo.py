@@ -17,6 +17,7 @@ def main() -> None:
             block_size_bytes=16 * 1024,
             decode_steps=64,
             seed=7,
+            profile="rag_mixed_priority",
         )
     )
     print(recorder.print_summary())

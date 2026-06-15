@@ -61,6 +61,29 @@ def test_to_dict_from_dict_round_trip():
         compression_ok=True,
         recompute_ok=True,
         prefetch_ok=True,
+        slack_us=900,
+        arrival_step=4,
+        target_decode_step=10,
     )
     round_trip = MemoryIntent.from_dict(intent.to_dict())
     assert round_trip.to_dict() == intent.to_dict()
+
+
+def test_deadline_score_ordering():
+    urgent = make_intent(
+        phase=Phase.DECODE,
+        priority=Priority.DECODE_CRITICAL,
+        deadline_us=500,
+        slack_us=200,
+        request_priority=90,
+        recompute_cost_us=5000,
+    )
+    cold = make_intent(
+        phase=Phase.DONE,
+        priority=Priority.COLD,
+        deadline_us=None,
+        request_priority=10,
+        recompute_cost_us=50,
+    )
+    assert urgent.effective_deadline_score(10) > cold.effective_deadline_score(10)
+    assert urgent.eviction_risk_score(10) > cold.eviction_risk_score(10)

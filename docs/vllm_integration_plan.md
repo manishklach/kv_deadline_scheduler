@@ -26,7 +26,7 @@ Integrate with vLLM without changing runtime behavior at first. The initial obje
 ## Phase 2: Offline Policy Replay
 
 - Feed real traces into this simulator.
-- Compare LRU-style policies with intent-aware and deadline-aware policies.
+- Compare LRU, hot/cold, predictive-hotness, intent-aware, and deadline-aware policies.
 - Find the pressure scenarios where semantics matter most.
 
 ## Phase 3: Advisory Mode

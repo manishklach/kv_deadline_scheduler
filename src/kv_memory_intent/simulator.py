@@ -2,14 +2,32 @@
 
 from __future__ import annotations
 
+import json
 import random
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
 
 from .events import MemoryIntentEvent
 from .metrics import percentile
-from .policies import DeadlineAwarePolicy, IntentAwarePolicy, LRUPolicy, PlacementPolicy
+from .policies import (
+    DeadlineAwarePolicy,
+    HotColdPolicy,
+    IntentAwarePolicy,
+    LRUPolicy,
+    PlacementPolicy,
+    PredictiveHotnessPolicy,
+)
 from .schema import EventType, MemoryIntent, ObjectType, Phase, Priority, Tier
+
+WorkloadProfile = Literal[
+    "balanced",
+    "deadline_pressure",
+    "rag_mixed_priority",
+    "speculative_decode",
+    "long_context_extreme",
+]
 
 
 @dataclass(slots=True)
@@ -83,6 +101,7 @@ class KVMemorySimulator:
         self.hbm_blocks: set[str] = set()
         self.dram_blocks: set[str] = set()
         self.latencies: list[int] = []
+        self.decision_log: list[dict[str, object]] = []
         self.spill_count = 0
         self.prefetch_count = 0
         self.miss_count = 0
@@ -104,22 +123,57 @@ class KVMemorySimulator:
     def _record_usage(self) -> None:
         self.actual_peak_hbm_used_bytes = max(self.actual_peak_hbm_used_bytes, self._hbm_used())
 
+    def _log_decision(
+        self,
+        step: int,
+        action: str,
+        victim: MemoryIntent,
+        candidates: list[MemoryIntent],
+        reason: str,
+        avoided_decode_critical: bool,
+    ) -> None:
+        self.decision_log.append(
+            {
+                "step": step,
+                "action": action,
+                "policy": self.policy.name,
+                "victim_object_id": victim.object_id,
+                "victim_priority": victim.priority.value,
+                "victim_phase": victim.phase.value,
+                "victim_request_priority": victim.request_priority,
+                "victim_deadline_us": victim.deadline_us,
+                "reason": reason,
+                "avoided_decode_critical": avoided_decode_critical,
+            }
+        )
+
+    def write_decision_log(self, path: str | Path) -> None:
+        output = Path(path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with output.open("w", encoding="utf-8") as handle:
+            for record in self.decision_log:
+                handle.write(json.dumps(record, sort_keys=True) + "\n")
+
     def _move_to_hbm(self, block: MemoryIntent, current_step: int) -> int:
         block.current_tier = Tier.HBM
         self.live_blocks[block.object_id] = block
         self.hbm_blocks.add(block.object_id)
         self.dram_blocks.discard(block.object_id)
-        self._ensure_hbm_capacity(current_step)
+        added_latency = self._ensure_hbm_capacity(current_step)
         self._record_usage()
-        return 0
+        return added_latency
 
     def _ensure_hbm_capacity(self, current_step: int) -> int:
         added_latency = 0
         while self._hbm_used() > self.hbm_capacity_bytes:
-            victims = [self.live_blocks[object_id] for object_id in self.hbm_blocks if object_id in self.live_blocks]
-            victim = self.policy.choose_victim(victims, self.hbm_capacity_bytes, current_step)
+            candidates = [self.live_blocks[object_id] for object_id in self.hbm_blocks if object_id in self.live_blocks]
+            victim = self.policy.choose_victim(candidates, self.hbm_capacity_bytes, current_step)
             if victim is None:
                 break
+            reason = self.policy.explain_victim_choice(victim, candidates, current_step)
+            avoided_decode_critical = any(
+                block.object_id != victim.object_id and block.is_decode_critical() for block in candidates
+            )
             self.eviction_count += 1
             if victim.is_decode_critical():
                 self.decode_critical_evictions += 1
@@ -132,10 +186,12 @@ class KVMemorySimulator:
                 self.dram_blocks.add(victim.object_id)
                 self.spill_count += 1
                 added_latency += self.spill_latency_us
+                self._log_decision(current_step, "spill", victim, candidates, reason, avoided_decode_critical)
             else:
                 victim.current_tier = target_tier or Tier.NVME
                 self.live_blocks[victim.object_id] = victim
                 self.dram_blocks.discard(victim.object_id)
+                self._log_decision(current_step, "evict", victim, candidates, reason, avoided_decode_critical)
         self._record_usage()
         return added_latency
 
@@ -152,6 +208,9 @@ class KVMemorySimulator:
             request_priority=incoming.request_priority,
             recency_score=incoming.recency_score,
             deadline_us=incoming.deadline_us,
+            slack_us=incoming.slack_us,
+            arrival_step=incoming.arrival_step,
+            target_decode_step=incoming.target_decode_step,
             expected_reuse_window_tokens=incoming.expected_reuse_window_tokens,
             recompute_cost_us=incoming.recompute_cost_us,
             spill_cost_us=incoming.spill_cost_us,
@@ -171,7 +230,6 @@ class KVMemorySimulator:
             intent = event.intent.copy_with()
             existing = self.live_blocks.get(intent.object_id)
             if existing is not None:
-                # Keep the latest semantic metadata without lossy enum serialization.
                 intent = self._merge_intent(existing, intent)
 
             if event.event_type == EventType.ALLOCATED:
@@ -195,6 +253,8 @@ class KVMemorySimulator:
                     phase=intent.phase,
                     priority=intent.priority,
                     deadline_us=intent.deadline_us,
+                    slack_us=intent.slack_us,
+                    target_decode_step=intent.target_decode_step,
                     expected_reuse_window_tokens=intent.expected_reuse_window_tokens,
                     pin_requested=intent.pin_requested,
                     prefetch_ok=intent.prefetch_ok,
@@ -220,6 +280,8 @@ class KVMemorySimulator:
                         phase=intent.phase,
                         pin_requested=True,
                         deadline_us=intent.deadline_us,
+                        slack_us=intent.slack_us,
+                        target_decode_step=intent.target_decode_step,
                         expected_reuse_window_tokens=intent.expected_reuse_window_tokens,
                         request_priority=intent.request_priority,
                         recency_score=intent.recency_score,
@@ -229,6 +291,8 @@ class KVMemorySimulator:
                     self.live_blocks[intent.object_id] = existing.copy_with(
                         priority=Priority.COLD,
                         phase=intent.phase,
+                        deadline_us=intent.deadline_us,
+                        slack_us=intent.slack_us,
                         compression_ok=intent.compression_ok,
                         recompute_ok=intent.recompute_ok,
                         prefetch_ok=intent.prefetch_ok,
@@ -241,16 +305,28 @@ class KVMemorySimulator:
                 if existing is not None and Tier.DRAM in existing.allowed_tiers:
                     self.hbm_blocks.discard(existing.object_id)
                     self.dram_blocks.add(existing.object_id)
-                    self.live_blocks[existing.object_id] = existing.copy_with(current_tier=Tier.DRAM)
+                    updated = existing.copy_with(current_tier=Tier.DRAM)
+                    self.live_blocks[existing.object_id] = updated
                     self.spill_count += 1
                     latency += self.spill_latency_us
             elif event.event_type == EventType.PREFETCHED:
-                if existing is not None and existing.object_id not in self.hbm_blocks:
-                    should_prefetch = self.policy.should_prefetch(existing, event.step)
+                block = self.live_blocks.get(intent.object_id)
+                if block is not None and block.object_id not in self.hbm_blocks:
+                    block = self._merge_intent(block, intent)
+                    self.live_blocks[block.object_id] = block
+                    should_prefetch = self.policy.should_prefetch(block, event.step)
                     if should_prefetch:
                         self.prefetch_count += 1
                         latency += self.prefetch_latency_us
-                        latency += self._move_to_hbm(existing, event.step)
+                        latency += self._move_to_hbm(block, event.step)
+                        self._log_decision(
+                            event.step,
+                            "prefetch",
+                            block,
+                            [block],
+                            f"Prefetched {block.object_id} because it is urgent and prefetchable under {self.policy.name}.",
+                            avoided_decode_critical=False,
+                        )
             elif event.event_type == EventType.EVICTED:
                 if existing is not None:
                     self.hbm_blocks.discard(existing.object_id)
@@ -294,6 +370,44 @@ class KVMemorySimulator:
         )
 
 
+def _profile_settings(profile: WorkloadProfile) -> dict[str, float]:
+    defaults: dict[str, float] = {
+        "long_context_fraction": 0.3,
+        "draft_fraction": 0.2,
+        "high_priority_fraction": 0.2,
+        "deadline_ratio": 0.25,
+        "reuse_scale": 1.0,
+    }
+    if profile == "deadline_pressure":
+        defaults.update(
+            long_context_fraction=0.4,
+            high_priority_fraction=0.45,
+            deadline_ratio=0.65,
+            reuse_scale=0.7,
+        )
+    elif profile == "rag_mixed_priority":
+        defaults.update(
+            long_context_fraction=0.5,
+            high_priority_fraction=0.15,
+            deadline_ratio=0.2,
+            reuse_scale=1.6,
+        )
+    elif profile == "speculative_decode":
+        defaults.update(
+            draft_fraction=0.45,
+            deadline_ratio=0.3,
+            reuse_scale=0.9,
+        )
+    elif profile == "long_context_extreme":
+        defaults.update(
+            long_context_fraction=0.75,
+            high_priority_fraction=0.1,
+            deadline_ratio=0.15,
+            reuse_scale=2.8,
+        )
+    return defaults
+
+
 def generate_synthetic_kv_workload(
     num_requests: int,
     blocks_per_request: int,
@@ -303,8 +417,16 @@ def generate_synthetic_kv_workload(
     draft_fraction: float = 0.2,
     high_priority_fraction: float = 0.2,
     seed: int = 42,
+    profile: WorkloadProfile = "balanced",
 ) -> list[MemoryIntentEvent]:
     rng = random.Random(seed)
+    settings = _profile_settings(profile)
+    long_context_fraction = settings["long_context_fraction"]
+    draft_fraction = settings["draft_fraction"]
+    high_priority_fraction = settings["high_priority_fraction"]
+    deadline_ratio = settings["deadline_ratio"]
+    reuse_scale = settings["reuse_scale"]
+
     events: list[MemoryIntentEvent] = []
     requests: list[dict[str, object]] = []
     step = 0
@@ -313,34 +435,52 @@ def generate_synthetic_kv_workload(
         request_id = f"req-{request_index:03d}"
         is_high = request_index < max(1, int(num_requests * high_priority_fraction))
         is_long = request_index < max(1, int(num_requests * long_context_fraction))
-        request_priority = 90 if is_high else rng.randint(20, 60)
-        block_count = blocks_per_request * (2 if is_long else 1)
+        request_priority = 92 if is_high else rng.randint(10, 60)
+        block_count = blocks_per_request * (3 if profile == "long_context_extreme" and is_long else 2 if is_long else 1)
         block_ids: list[str] = []
-        hot_span = 3 if is_high else 2
+        hot_span = 3 if is_high or profile == "deadline_pressure" else 2
+
         for block_id in range(block_count):
-            priority = Priority.WARM if block_id < block_count - hot_span else Priority.HOT
-            phase = Phase.PREFILL
+            is_hot_tail = block_id >= block_count - hot_span
+            priority = Priority.WARM if not is_hot_tail else Priority.HOT
+            base_deadline = 900 if is_high and is_hot_tail else 10_000
+            if profile == "deadline_pressure" and is_hot_tail:
+                base_deadline = 700
+            elif profile == "rag_mixed_priority" and not is_high:
+                base_deadline = 15_000
+            elif profile == "long_context_extreme" and not is_hot_tail:
+                base_deadline = None  # type: ignore[assignment]
+            reuse_window = 2 if is_hot_tail else int((24 + block_id) * reuse_scale)
+            recompute_cost = 5_000 if is_hot_tail else 200
+            is_draft = (
+                block_id < max(1, int(block_count * draft_fraction))
+                and profile in {"speculative_decode", "balanced"}
+                and not is_high
+            )
             intent = MemoryIntent(
                 object_id=f"{request_id}:block:{block_id}",
                 request_id=request_id,
                 block_id=block_id,
                 object_type=ObjectType.KV_CACHE,
-                phase=phase,
+                phase=Phase.PREFILL,
                 priority=priority,
                 allowed_tiers={Tier.HBM, Tier.DRAM},
                 current_tier=Tier.HBM,
                 size_bytes=block_size_bytes,
                 request_priority=request_priority,
-                recency_score=0.2 if priority == Priority.WARM else 0.6,
-                deadline_us=800 if is_high and block_id >= block_count - hot_span else 9_000,
-                expected_reuse_window_tokens=2 if block_id >= block_count - hot_span else 24 + block_id,
-                recompute_cost_us=4_000 if block_id >= block_count - hot_span else 300,
+                recency_score=0.15 if priority == Priority.WARM else 0.7,
+                deadline_us=base_deadline,
+                slack_us=(base_deadline - 200) if isinstance(base_deadline, int) else None,
+                arrival_step=step,
+                target_decode_step=step + block_count + max(2, block_id // 2),
+                expected_reuse_window_tokens=reuse_window,
+                recompute_cost_us=recompute_cost,
                 spill_cost_us=200,
-                compression_ok=block_id < block_count - hot_span,
-                recompute_ok=block_id < block_count - hot_span,
-                prefetch_ok=block_id < block_count - hot_span,
+                compression_ok=not is_hot_tail,
+                recompute_ok=not is_hot_tail,
+                prefetch_ok=not is_hot_tail,
                 pin_requested=False,
-                is_draft=block_id < max(1, int(block_count * draft_fraction)) and not is_high,
+                is_draft=is_draft,
                 is_committed=False,
                 created_step=step,
                 last_access_step=step,
@@ -350,11 +490,12 @@ def generate_synthetic_kv_workload(
                     step=step,
                     event_type=EventType.ALLOCATED,
                     intent=intent,
-                    reason="initial kv allocation",
+                    reason=f"initial kv allocation ({profile})",
                 )
             )
             block_ids.append(intent.object_id)
             step += 1
+
         requests.append(
             {
                 "request_id": request_id,
@@ -375,6 +516,8 @@ def generate_synthetic_kv_workload(
         cold_candidates = block_ids[:-hot_span]
 
         for offset, object_id in enumerate(current_hot):
+            deadline_us = 700 if (profile == "deadline_pressure" or is_high) else 2_500
+            slack_us = 250 if profile == "deadline_pressure" else 1_500 if is_high else 3_500
             intent = MemoryIntent(
                 object_id=object_id,
                 request_id=str(active["request_id"]),
@@ -387,9 +530,12 @@ def generate_synthetic_kv_workload(
                 size_bytes=block_size_bytes,
                 request_priority=int(active["request_priority"]),
                 recency_score=1.0 - (offset * 0.1),
-                deadline_us=800 if is_high else 2_500,
+                deadline_us=deadline_us,
+                slack_us=slack_us,
+                arrival_step=0,
+                target_decode_step=step + offset,
                 expected_reuse_window_tokens=1 + offset,
-                recompute_cost_us=5_000 if is_high else 2_000,
+                recompute_cost_us=6_000 if is_high or profile == "deadline_pressure" else 2_000,
                 spill_cost_us=250,
                 prefetch_ok=False,
                 pin_requested=True,
@@ -419,6 +565,7 @@ def generate_synthetic_kv_workload(
 
         if cold_candidates:
             stale_id = cold_candidates[decode_step % len(cold_candidates)]
+            low_prio = max(int(active["request_priority"]) - (45 if profile == "rag_mixed_priority" else 20), 0)
             stale_intent = MemoryIntent(
                 object_id=stale_id,
                 request_id=str(active["request_id"]),
@@ -429,17 +576,20 @@ def generate_synthetic_kv_workload(
                 allowed_tiers={Tier.HBM, Tier.DRAM},
                 current_tier=Tier.HBM,
                 size_bytes=block_size_bytes,
-                request_priority=max(int(active["request_priority"]) - 20, 0),
-                recency_score=0.0,
-                deadline_us=None,
-                expected_reuse_window_tokens=48,
-                recompute_cost_us=100,
+                request_priority=low_prio,
+                recency_score=0.0 if profile != "long_context_extreme" else 0.05,
+                deadline_us=None if profile != "deadline_pressure" else int(6_000 / max(deadline_ratio, 0.1)),
+                slack_us=None,
+                arrival_step=0,
+                target_decode_step=step + 512,
+                expected_reuse_window_tokens=int(48 * reuse_scale),
+                recompute_cost_us=80,
                 spill_cost_us=100,
                 compression_ok=True,
                 recompute_ok=True,
                 prefetch_ok=True,
                 pin_requested=False,
-                is_draft=not is_high and decode_step % 3 == 0,
+                is_draft=profile == "speculative_decode" and decode_step % 2 == 0,
                 is_committed=False,
                 created_step=0,
                 last_access_step=max(step - 20, 0),
@@ -454,7 +604,7 @@ def generate_synthetic_kv_workload(
             )
             step += 1
 
-            if stale_intent.is_draft and decode_step % 9 == 0:
+            if stale_intent.is_draft and decode_step % 5 == 0:
                 commit_intent = stale_intent.copy_with(is_committed=True, is_draft=False)
                 events.append(
                     MemoryIntentEvent(
@@ -471,8 +621,9 @@ def generate_synthetic_kv_workload(
                     current_tier=Tier.DRAM,
                     prefetch_ok=True,
                     priority=Priority.HOT if is_high else Priority.WARM,
-                    expected_reuse_window_tokens=4,
-                    deadline_us=4_000 if is_high else 7_000,
+                    deadline_us=4_000 if is_high else None,
+                    slack_us=1_200 if is_high else None,
+                    expected_reuse_window_tokens=4 if profile != "long_context_extreme" else 12,
                 )
                 events.append(
                     MemoryIntentEvent(
@@ -491,6 +642,10 @@ def policy_from_name(name: str) -> PlacementPolicy:
     normalized = name.strip().lower()
     if normalized == "lru":
         return LRUPolicy()
+    if normalized == "hotcold":
+        return HotColdPolicy()
+    if normalized == "predictive":
+        return PredictiveHotnessPolicy()
     if normalized == "intent":
         return IntentAwarePolicy()
     if normalized == "deadline":

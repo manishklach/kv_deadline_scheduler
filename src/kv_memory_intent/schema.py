@@ -1,4 +1,4 @@
-"""Core memory intent schema."""
+"""Core schema for the KV Deadline Scheduler research prototype."""
 
 from __future__ import annotations
 
@@ -63,6 +63,9 @@ class MemoryIntent:
     request_priority: int = 0
     recency_score: float = 0.0
     deadline_us: int | None = None
+    slack_us: int | None = None
+    arrival_step: int | None = None
+    target_decode_step: int | None = None
     expected_reuse_window_tokens: int | None = None
     recompute_cost_us: int | None = None
     spill_cost_us: int | None = None
@@ -119,6 +122,11 @@ class MemoryIntent:
             request_priority=int(data.get("request_priority", 0)),
             recency_score=float(data.get("recency_score", 0.0)),
             deadline_us=int(data["deadline_us"]) if data.get("deadline_us") is not None else None,
+            slack_us=int(data["slack_us"]) if data.get("slack_us") is not None else None,
+            arrival_step=int(data["arrival_step"]) if data.get("arrival_step") is not None else None,
+            target_decode_step=(
+                int(data["target_decode_step"]) if data.get("target_decode_step") is not None else None
+            ),
             expected_reuse_window_tokens=(
                 int(data["expected_reuse_window_tokens"])
                 if data.get("expected_reuse_window_tokens") is not None
@@ -154,3 +162,50 @@ class MemoryIntent:
 
     def is_prefetchable(self) -> bool:
         return self.prefetch_ok and self.current_tier != Tier.HBM and Tier.HBM in self.allowed_tiers
+
+    def effective_deadline_score(self, current_step: int) -> float:
+        """Higher score means the block is more urgent to protect."""
+        score = 0.0
+        if self.deadline_us is not None:
+            score += max(0.0, 10_000.0 - float(self.deadline_us)) / 20.0
+        if self.slack_us is not None:
+            score += max(0.0, 5_000.0 - float(self.slack_us)) / 10.0
+        if self.target_decode_step is not None:
+            step_distance = max(self.target_decode_step - current_step, 0)
+            score += max(0.0, 64.0 - float(step_distance))
+        score += self.request_priority * 2.0
+        if self.phase == Phase.DECODE:
+            score += 120.0
+        elif self.phase == Phase.VERIFY:
+            score += 30.0
+        if self.priority == Priority.DECODE_CRITICAL:
+            score += 300.0
+        elif self.priority == Priority.HOT:
+            score += 80.0
+        elif self.priority == Priority.WARM:
+            score += 30.0
+        if self.recompute_cost_us is not None:
+            score += min(self.recompute_cost_us / 25.0, 250.0)
+        if self.pin_requested:
+            score += 400.0
+        return score
+
+    def eviction_risk_score(self, current_step: int) -> float:
+        """Higher score means evicting this block is more dangerous."""
+        risk = self.effective_deadline_score(current_step)
+        risk += self.recency_score * 40.0
+        if self.is_committed:
+            risk += 15.0
+        if self.is_draft and not self.is_committed:
+            risk -= 35.0
+        if self.recompute_ok:
+            risk -= 25.0
+        if self.compression_ok:
+            risk -= 15.0
+        if self.expected_reuse_window_tokens is not None:
+            risk -= min(self.expected_reuse_window_tokens / 8.0, 80.0)
+        if self.phase == Phase.DONE:
+            risk -= 140.0
+        elif self.phase == Phase.IDLE:
+            risk -= 60.0
+        return risk

@@ -1,4 +1,10 @@
-from kv_memory_intent.policies import DeadlineAwarePolicy, IntentAwarePolicy, LRUPolicy
+from kv_memory_intent.policies import (
+    DeadlineAwarePolicy,
+    HotColdPolicy,
+    IntentAwarePolicy,
+    LRUPolicy,
+    PredictiveHotnessPolicy,
+)
 from kv_memory_intent.schema import MemoryIntent, ObjectType, Phase, Priority, Tier
 
 
@@ -52,7 +58,7 @@ def test_intent_aware_prefers_cold_over_hot():
 
 def test_deadline_aware_protects_near_deadline_block():
     policy = DeadlineAwarePolicy()
-    near_deadline = block("b-1", priority=Priority.HOT, deadline_us=500, request_priority=80)
+    near_deadline = block("b-1", priority=Priority.HOT, deadline_us=500, slack_us=200, request_priority=80)
     cold = block("b-2", priority=Priority.COLD, deadline_us=None, request_priority=10, recency_score=0.0)
     assert policy.choose_victim([near_deadline, cold], 1024, 10) == cold
 
@@ -65,6 +71,21 @@ def test_deadline_aware_prefetches_near_deadline_block():
         priority=Priority.HOT,
         prefetch_ok=True,
         deadline_us=4000,
+        slack_us=1500,
         expected_reuse_window_tokens=3,
     )
     assert policy.should_prefetch(candidate, 10) is True
+
+
+def test_hotcold_does_not_use_priority_or_deadline():
+    policy = HotColdPolicy()
+    urgent = block("b-1", priority=Priority.DECODE_CRITICAL, deadline_us=100, recency_score=0.2, last_access_step=2)
+    cold = block("b-2", priority=Priority.COLD, deadline_us=None, recency_score=0.1, last_access_step=9)
+    assert policy.choose_victim([urgent, cold], 1024, 10) == cold
+
+
+def test_predictive_hotness_does_not_use_priority_or_deadline():
+    policy = PredictiveHotnessPolicy()
+    urgent = block("b-1", priority=Priority.DECODE_CRITICAL, deadline_us=100, recency_score=0.4, expected_reuse_window_tokens=2)
+    stale = block("b-2", priority=Priority.COLD, deadline_us=None, recency_score=0.1, expected_reuse_window_tokens=64)
+    assert policy.choose_victim([urgent, stale], 1024, 10) == stale

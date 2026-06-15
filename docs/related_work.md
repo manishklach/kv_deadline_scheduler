@@ -17,7 +17,7 @@ This repository is intentionally modest in scope. It is a simulator-first protot
 
 Most memory-tiering systems infer demand from access behavior.
 
-This repo asks whether AI runtimes should declare memory intent directly.
+This repo asks whether AI runtimes should declare deadline-aware memory intent directly.
 
 That is the core difference:
 

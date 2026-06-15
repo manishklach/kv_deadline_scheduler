@@ -13,6 +13,7 @@ def main() -> None:
         block_size_bytes=16 * 1024,
         decode_steps=120,
         seed=11,
+        profile="deadline_pressure",
     )
     results = [
         KVMemorySimulator(
@@ -20,11 +21,11 @@ def main() -> None:
             hbm_capacity_bytes=3 * 1024 * 1024,
             dram_capacity_bytes=32 * 1024 * 1024,
         ).run(trace)
-        for name in ("lru", "intent", "deadline")
+        for name in ("lru", "hotcold", "predictive", "intent", "deadline")
     ]
     print(compare_results(results))
     print(
-        "\nIntent-aware policies reduce decode-critical misses by protecting pinned "
+        "\nDeadline-aware policies reduce decode-critical misses by protecting pinned "
         "decode blocks and evicting cold low-priority blocks first."
     )
 
