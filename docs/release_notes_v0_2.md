@@ -1,9 +1,22 @@
-# v0.2 — Passive vLLM Trace Adapter
+# v0.2 — Passive vLLM-Style Trace Adapter and Deadline-Aware Scheduling
 
-- Added a vLLM-style passive adapter.
-- Added a mock vLLM trace generator.
-- Added CLI command `kvmi mock-vllm`.
-- Added docs for passive vLLM trace capture.
-- Added tests for the adapter and mock trace replay.
-- Still no production vLLM behavior change.
-- Still no real memory actuation.
+This release continues the deadline-aware project rebranding around the public name **KV Deadline Scheduler** while keeping the internal Python package name `kv_memory_intent` for compatibility.
+
+## Highlights
+
+- Added a policy ladder spanning `LRU`, `HotCold`, `PredictiveHotness`, `IntentAware`, and `DeadlineAware`.
+- Added decision logs for simulated eviction, spill, and prefetch choices.
+- Added HBM sweep tooling for capacity sensitivity experiments.
+- Added optional plotting for sweep outputs.
+- Added workload profiles for balanced, deadline-pressure, mixed-priority, speculative, and long-context-heavy traces.
+- Added a passive vLLM-style adapter that maps KV lifecycle signals into `MemoryIntentEvent` JSONL traces without importing or modifying vLLM.
+- Added mock vLLM trace generation and replay through the existing simulator.
+
+## Limitations
+
+- Results remain simulated.
+- This is still a research prototype.
+- The passive adapter does not change vLLM scheduling behavior.
+- There is still no real GPU memory actuation.
+- There is still no production CXL or NVMe backend.
+- There are still no claims of production vLLM speedups.

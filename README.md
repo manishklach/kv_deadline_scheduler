@@ -2,17 +2,65 @@
 
 Deadline-aware KV-cache scheduling for long-context LLM inference memory pressure.
 
-Generic memory tiering asks: "Is this page hot?"
-
-KV Deadline Scheduler asks: "Which request-state block is closest to missing its deadline, and what is the cost of evicting it?"
-
 KV cache is not anonymous memory. It is request-state with deadlines.
 
-> Current results are from a deterministic simulator and synthetic traces. They are intended to test the interface and policy behavior, not to claim production vLLM speedups.
+Generic memory tiering asks: "Is this page hot?"
 
-This prototype tests the control-plane interface before implementing real memory movement.
+KV Deadline Scheduler asks: "Which KV block belongs to decode-critical request-state, how close is it to missing its deadline, and what is the cost of evicting it?"
 
-The repository is branded as KV Deadline Scheduler. The prototype Python package is currently `kv_memory_intent`.
+> Current results are simulated and prototype-oriented. They are intended to test the interface and policy behavior, not to claim production vLLM speedups or real GPU memory control.
+
+The public project name is KV Deadline Scheduler. The prototype Python package is currently named `kv_memory_intent`.
+
+## GitHub Metadata Suggestions
+
+Description:
+Deadline-aware KV-cache scheduling for protecting decode-critical request-state under long-context LLM inference pressure.
+
+Website:
+[https://manishklach.github.io/](https://manishklach.github.io/)
+
+Topics:
+- `llm`
+- `kv-cache`
+- `inference`
+- `vllm`
+- `long-context`
+- `pagedattention`
+- `gpu-memory`
+- `memory-management`
+- `memory-tiering`
+- `ai-infrastructure`
+- `systems-research`
+- `hbm`
+- `cxl`
+- `nvme`
+
+## What This Repo Is
+
+KV Deadline Scheduler is a systems research prototype for deadline-aware KV-cache placement under long-context LLM inference pressure. It defines a runtime-declared KV intent schema, records lifecycle events, generates synthetic and vLLM-style traces, compares access-based and deadline-aware policies, and reports simulated p50, p95, and p99 latency, decode-critical misses, evictions, spills, prefetches, and HBM pressure behavior.
+
+## What This Repo Is Not
+
+- Not a production vLLM scheduler
+- Not a kernel driver
+- Not a real GPU HBM controller
+- Not a production CXL/NVMe tiering stack
+- Not a MEXT clone
+- Not a KV compression method
+
+## Current Capabilities
+
+- Runtime-declared KV intent schema
+- KV lifecycle event tracing
+- Synthetic workload profiles
+- Mock vLLM-style trace adapter
+- LRU, HotCold, PredictiveHotness, IntentAware, DeadlineAware policies
+- Decision logs
+- HBM pressure sweeps
+- Optional plotting
+- Simulated p50/p95/p99 metrics
+- Docs for passive vLLM integration
 
 ## Problem
 
@@ -50,27 +98,7 @@ Policies can then:
 | HotCold | Yes | Yes | No | No | No |
 | PredictiveHotness | Yes | Yes | No | No | No |
 | IntentAware | Yes | Partial | Yes | No/limited | Yes |
-| KVDeadline | Yes | Partial | Yes | Yes | Yes |
-
-## What This Prototype Does
-
-- Defines a concrete Python schema for KV intent and lifecycle events.
-- Generates deterministic synthetic KV traces across multiple workload profiles.
-- Simulates `LRU`, `HotCold`, `PredictiveHotness`, `IntentAware`, and `KVDeadline`.
-- Reports simulated p50, p95, and p99 latency, misses, spills, evictions, and decode-critical failure modes.
-- Records decision logs for evictions, spills, and prefetches.
-- Sweeps HBM capacity to make pressure sensitivity visible.
-- Includes a passive vLLM adapter skeleton for future trace capture.
-
-## What This Prototype Does Not Do Yet
-
-- No kernel driver
-- No real vLLM behavior change
-- No CUDA memory movement
-- No real CXL or NVMe backend
-- No production scheduler
-- No real MEXT implementation or production comparison
-- No real GPU HBM control
+| DeadlineAware | Yes | Partial | Yes | Yes | Yes |
 
 ## Quickstart
 
@@ -94,15 +122,15 @@ python examples/plot_sweep_results.py sweep.csv --out docs/results/
 
 The next step toward real-runtime integration is passive tracing.
 
-`KV Deadline Scheduler` includes a vLLM-style adapter skeleton that maps KV block lifecycle events into `MemoryIntentEvent` JSONL traces without importing or modifying vLLM.
+`KV Deadline Scheduler` includes a vLLM-style passive adapter that maps KV block lifecycle events into `MemoryIntentEvent` JSONL traces without importing or modifying vLLM.
 
 This lets the project move from synthetic traces to real-runtime traces in stages:
 
-1. mock vLLM-like traces,
-2. passive vLLM hooks,
-3. offline replay,
-4. advisory scheduling,
-5. eventual actuation.
+1. mock vLLM-like traces
+2. passive vLLM hooks
+3. offline replay
+4. advisory scheduling
+5. eventual actuation
 
 Quickstart:
 
@@ -112,11 +140,11 @@ kvmi mock-vllm --out mock_vllm_trace.jsonl --requests 16 --decode-steps 256 --co
 
 ## Workload Profiles
 
-- `balanced`: general-purpose default.
-- `deadline_pressure`: many decode-critical blocks with tight deadlines.
-- `rag_mixed_priority`: mixes interactive requests with low-priority background queries.
-- `speculative_decode`: emits draft blocks where uncommitted drafts are often safe victims.
-- `long_context_extreme`: large cold KV working set plus a small urgent decode hot set.
+- `balanced`: general-purpose default
+- `deadline_pressure`: many decode-critical blocks with tight deadlines
+- `rag_mixed_priority`: mixes interactive requests with low-priority background queries
+- `speculative_decode`: emits draft blocks where uncommitted drafts are often safe victims
+- `long_context_extreme`: large cold KV working set plus a small urgent decode hot set
 
 ## Example Output
 
@@ -128,7 +156,7 @@ Illustrative comparison:
 | HotCold | 50.0 us | 5050.0 us | 5050.0 us | 22 | 22 | 116 | 0 | 116 | 0 | 16.0 KiB | 0.0% | 12.0% |
 | PredictiveHotness | 50.0 us | 5050.0 us | 5050.0 us | 18 | 18 | 109 | 0 | 109 | 0 | 16.0 KiB | 0.0% | 28.0% |
 | IntentAware | 50.0 us | 250.0 us | 250.0 us | 0 | 0 | 96 | 0 | 96 | 0 | 16.0 KiB | 95.0% | 100.0% |
-| KVDeadline | 50.0 us | 250.0 us | 250.0 us | 0 | 0 | 96 | 0 | 96 | 0 | 16.0 KiB | 95.0% | 100.0% |
+| DeadlineAware | 50.0 us | 250.0 us | 250.0 us | 0 | 0 | 96 | 0 | 96 | 0 | 16.0 KiB | 95.0% | 100.0% |
 
 ## Example Decision
 
@@ -140,7 +168,7 @@ LRU evicts:
 - priority: `DECODE_CRITICAL`
 - deadline_us: `900`
 
-KVDeadline evicts:
+DeadlineAware evicts:
 - `req_12:block_88`
 - phase: `PREFILL`
 - priority: `COLD`
@@ -149,6 +177,25 @@ KVDeadline evicts:
 - expected_reuse_window_tokens: `512`
 
 This is the core thesis: both are memory blocks, but they are not equally valuable request-state.
+
+## Near-Term Roadmap
+
+v0.3 Passive real vLLM tracing:
+- identify real vLLM KV block lifecycle hook points
+- emit `MemoryIntentEvent` JSONL during a real serving run
+- no scheduling behavior change
+
+v0.4 Offline replay:
+- replay real vLLM traces through the policy simulator
+- compare `LRU` / `HotCold` / `PredictiveHotness` / `IntentAware` / `DeadlineAware`
+
+v0.5 Advisory scheduler:
+- policy recommends pin, spill, and prefetch choices
+- runtime logs recommendations but does not enforce
+
+v0.6 Actuation prototype:
+- integrate recommendations with a runtime-level KV allocation or offload path
+- measure p99 and decode-critical miss behavior on real workloads
 
 ## Architecture
 
@@ -176,15 +223,6 @@ Predictive memory tiering infers hot pages from below.
 KV Deadline Scheduler explores runtime-declared memory meaning from above.
 
 The point is not to replace access-based signals. The point is that the runtime already knows request urgency and deadline risk that lower memory tiers should not have to infer from anonymous accesses alone.
-
-## Future Integration
-
-- Instrument the vLLM KV cache manager and block pool.
-- Add passive trace capture first.
-- Replay real traces offline before changing runtime behavior.
-- Add advisory mode next.
-- Explore LMCache-style backends for future actuation.
-- Benchmark p99 behavior on long-context serving workloads.
 
 ## Repository Layout
 
