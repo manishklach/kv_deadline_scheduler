@@ -50,6 +50,10 @@ This does not require exact one-to-one kernel primitives at first. The immediate
 
 ## No-Kernel-Patch Experiments
 
+Phase 1: No-kernel-patch I/O priority emulation.
+
+This repository now includes a userspace benchmark in `experiments/linux_io_priority/kv_io_priority_bench.py`. It emulates decode-critical KV prefetch as small reads and cold KV spill as larger background writes, then compares baseline mixed I/O against a separated mode with best-effort priority controls.
+
 A first wave of experiments can stay entirely in user space:
 
 - Use `ionice` or `ioprio` where applicable to separate critical and background operations.

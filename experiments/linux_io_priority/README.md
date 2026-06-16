@@ -1,41 +1,61 @@
-# Linux I/O Priority Benchmark Plan
+# Linux I/O Priority Emulation Benchmark
 
-This directory is reserved for a future userspace benchmark that studies how KV-style I/O classes interact with Linux storage prioritization.
+This benchmark is a Phase 1 userspace experiment for the kernel-facing KV Deadline Scheduler research track.
 
-There is no kernel patch implemented here and no benchmark harness yet. This is an experimental plan.
+It does not test LLM inference directly. It emulates a future KV spill and prefetch backend:
 
-## Benchmark Idea
+- Critical reads stand for decode-critical KV prefetch.
+- Background writes stand for cold KV spill.
 
-Create two workload files:
+The goal is to test whether KV intent can be mapped to userspace I/O priority separation before touching kernel schedulers.
 
-- `critical_reads.bin`
-- `background_spills.bin`
+## What It Measures
 
-The benchmark would compare:
+The benchmark creates two files in a configurable directory:
 
-- Normal mixed I/O with no explicit separation
-- Priority-separated I/O for critical reads versus background spill writes
+- `critical_reads.dat`
+- `background_spills.dat`
 
-Potential implementation paths include `io_uring`, async file I/O, `ionice`, `ioprio`, or cgroup I/O controls, depending on platform support.
+It then runs two concurrent workloads:
 
-## Example Workload Shape
+- Small random reads against `critical_reads.dat`
+- Larger sequential writes against `background_spills.dat`
 
-- `critical_reads.bin`
-  Represents decode-critical KV prefetch traffic that must complete before token generation stalls.
-- `background_spills.bin`
-  Represents low-priority KV spill traffic created by memory pressure.
+Two modes are supported:
 
-The benchmark should inject background write pressure while repeatedly measuring completion time for critical reads.
+- `baseline`
+  Critical reads and background writes run with the same scheduling behavior.
+- `separated`
+  The benchmark tries to emulate KV-aware separation by placing critical reads and background writes in different worker processes and, on Linux, attempting best-effort `ioprio` separation. If `ioprio` is unavailable or fails, the benchmark continues with a warning.
 
-## Metrics
+## Relationship to KV Deadline Scheduler
 
-- Critical read p99 latency
-- Aggregate throughput
-- Starvation behavior
-- Background write delay
+KV Deadline Scheduler models deadline-aware handling of KV request-state before it becomes storage I/O.
 
-## Research Goal
+This benchmark sits later in the stack. It asks a narrower question: if decode-critical KV prefetch and cold KV spill are mapped onto different userspace I/O classes, does critical read tail latency improve under write pressure?
 
-The goal is to test whether separating KV-inspired I/O classes in user space improves tail latency for critical reads under concurrent spill pressure.
+It is an emulation of KV-aware I/O classes, not a production scheduler.
 
-Any future kernel-specific work should be justified by these userspace results first.
+## Example Commands
+
+```bash
+python experiments/linux_io_priority/kv_io_priority_bench.py --mode baseline --duration-sec 10 --dir /tmp/kvio
+python experiments/linux_io_priority/kv_io_priority_bench.py --mode separated --duration-sec 10 --dir /tmp/kvio
+```
+
+Optional JSON output:
+
+```bash
+python experiments/linux_io_priority/kv_io_priority_bench.py \
+  --mode separated \
+  --duration-sec 10 \
+  --dir /tmp/kvio \
+  --json-out /tmp/kvio/results.json
+```
+
+## Notes on Interpretation
+
+- Results depend heavily on filesystem, NVMe or SSD behavior, kernel version, cache state, mount options, and permissions.
+- No root privileges are required by default.
+- For stronger signal, run on Linux with a real NVMe device and relatively cold cache state.
+- On non-Linux systems, the benchmark still runs, but `ioprio` separation is disabled.
