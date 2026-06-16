@@ -1,6 +1,13 @@
 """KV Deadline Scheduler research prototype."""
 
-from .adapters import VLLMIntentAdapter, generate_mock_vllm_trace
+from .adapters import (
+    VLLMIntentAdapter,
+    generate_mock_vllm_trace,
+    load_openai_proxy_logs,
+    load_prometheus_samples,
+    openai_proxy_logs_to_intent_events,
+    prometheus_samples_to_intent_events,
+)
 from .events import MemoryIntentEvent
 from .kv_estimator import MODEL_PRESETS, ModelKVConfig, estimate_kv_bytes, estimate_request_kv_bytes, kv_bytes_per_token
 from .metrics import compare_results, format_bytes, percentile, write_sweep_csv
@@ -47,8 +54,12 @@ __all__ = [
     "generate_synthetic_kv_workload",
     "generate_mock_vllm_trace",
     "kv_bytes_per_token",
+    "load_openai_proxy_logs",
+    "load_prometheus_samples",
     "load_request_trace",
+    "openai_proxy_logs_to_intent_events",
     "percentile",
+    "prometheus_samples_to_intent_events",
     "request_trace_to_intent_events",
     "write_request_trace",
     "write_sweep_csv",

@@ -7,7 +7,13 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 
-from .adapters import generate_mock_vllm_trace
+from .adapters import (
+    generate_mock_vllm_trace,
+    load_openai_proxy_logs,
+    load_prometheus_samples,
+    openai_proxy_logs_to_intent_events,
+    prometheus_samples_to_intent_events,
+)
 from .events import MemoryIntentEvent
 from .kv_estimator import MODEL_PRESETS, ModelKVConfig, estimate_request_kv_bytes, kv_bytes_per_token
 from .metrics import SWEEP_COLUMNS, compare_results, write_sweep_csv
@@ -115,6 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--hbm-mb", type=int, default=512)
     compare.add_argument("--dram-mb", type=int, default=4096)
     compare.add_argument("--decision-log-dir", help="Optional directory for per-policy decision logs.")
+    compare.add_argument("--seed", type=int, default=42, help="Seed value (default: 42, set for reproducibility).")
 
     inspect = subparsers.add_parser(
         "inspect",
@@ -147,6 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
     mock_vllm.add_argument("--compare", action="store_true")
     mock_vllm.add_argument("--hbm-mb", type=int, default=128)
     mock_vllm.add_argument("--dram-mb", type=int, default=2048)
+    mock_vllm.add_argument("--seed", type=int, default=42, help="Seed value (default: 42, set for reproducibility).")
 
     estimate = subparsers.add_parser(
         "estimate-kv",
@@ -176,6 +184,25 @@ def build_parser() -> argparse.ArgumentParser:
     import_trace.add_argument("--logical-block-mb", type=int, default=1)
     import_trace.add_argument("--max-blocks-per-request", type=int, default=256)
     import_trace.add_argument("--json", action="store_true")
+
+    import_openai = subparsers.add_parser(
+        "import-openai-log",
+        help="Import OpenAI-compatible proxy logs into an intent trace.",
+        description="Load JSONL chat-completion proxy logs, infer approximate KV lifecycle events, and write MemoryIntentEvent JSONL.",
+    )
+    import_openai.add_argument("--requests", required=True)
+    import_openai.add_argument("--out", required=True)
+    import_openai.add_argument("--model")
+    import_openai.add_argument("--logical-block-tokens", type=int, default=256)
+
+    import_prometheus = subparsers.add_parser(
+        "import-prometheus",
+        help="Import Prometheus GPU memory telemetry into a synthetic pressure trace.",
+        description="Load Prometheus instant-query results for gpu_memory_used_bytes and convert them into synthetic pressure events.",
+    )
+    import_prometheus.add_argument("--samples", required=True)
+    import_prometheus.add_argument("--out", required=True)
+    import_prometheus.add_argument("--max-memory-gb", type=float, default=40.0)
 
     sweep = subparsers.add_parser(
         "sweep",
@@ -383,7 +410,7 @@ def main() -> None:
         return
 
     if args.command == "mock-vllm":
-        trace = generate_mock_vllm_trace(num_requests=args.requests, decode_steps=args.decode_steps)
+        trace = generate_mock_vllm_trace(num_requests=args.requests, decode_steps=args.decode_steps, seed=args.seed)
         trace.to_jsonl(args.out)
         summary = trace.summary()
         print(f"Generated mock vLLM trace: {args.out}")
@@ -458,6 +485,41 @@ def main() -> None:
             print(f"Output trace: {args.out}")
             print()
             print(recorder.print_summary())
+        return
+
+    if args.command == "import-openai-log":
+        entries = load_openai_proxy_logs(args.requests)
+        events = openai_proxy_logs_to_intent_events(
+            entries,
+            logical_block_tokens=args.logical_block_tokens,
+            model_name_override=args.model,
+        )
+        recorder = IntentTraceRecorder()
+        recorder.extend(events)
+        recorder.to_jsonl(args.out)
+        print("Imported OpenAI-compatible proxy log into approximate MemoryIntentEvent JSONL.")
+        print("Warning: imported proxy traces are approximate and simulator-based.")
+        print(f"Input entries: {len(entries)}")
+        print(f"Output trace: {args.out}")
+        print()
+        print(recorder.print_summary())
+        return
+
+    if args.command == "import-prometheus":
+        samples = load_prometheus_samples(args.samples)
+        events = prometheus_samples_to_intent_events(
+            samples,
+            max_memory_bytes=int(args.max_memory_gb * (1024**3)),
+        )
+        recorder = IntentTraceRecorder()
+        recorder.extend(events)
+        recorder.to_jsonl(args.out)
+        print("Imported Prometheus GPU memory telemetry into a synthetic pressure trace.")
+        print("Note: these events are intended to be merged with another trace, not to replace it.")
+        print(f"Input samples: {len(samples)}")
+        print(f"Output trace: {args.out}")
+        print()
+        print(recorder.print_summary())
         return
 
     if args.command == "sweep":

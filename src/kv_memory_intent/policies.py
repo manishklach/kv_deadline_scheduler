@@ -1,4 +1,7 @@
-"""Placement policies for KV Deadline Scheduler."""
+"""Placement policies for KV Deadline Scheduler.
+
+Higher score = better eviction candidate. Negative contributions protect a block.
+"""
 
 from __future__ import annotations
 
@@ -106,28 +109,28 @@ class IntentAwarePolicy(PlacementPolicy):
             Priority.HOT: 15.0,
             Priority.DECODE_CRITICAL: -900.0,
         }
-        score += priority_weight[block.priority]
+        score += priority_weight[block.priority]  # COLD=+110 makes it a preferred victim; DECODE_CRITICAL=-900 protects it strongly
         if block.pin_requested:
-            score -= 900.0
+            score -= 900.0  # Explicit pinning nearly removes the block from consideration unless there are no alternatives
         if block.phase == Phase.DONE:
-            score += 120.0
+            score += 120.0  # DONE state is safe to displace aggressively because the request no longer needs it live
         elif block.phase == Phase.IDLE:
-            score += 50.0
-        score += float(100 - block.request_priority)
+            score += 50.0  # IDLE state is less urgent than active decode or verify paths, so it drifts toward eviction
+        score += float(100 - block.request_priority)  # Lower-priority requests add positive score so they yield capacity first
         if block.expected_reuse_window_tokens is not None:
-            score += min(block.expected_reuse_window_tokens / 6.0, 120.0)
+            score += min(block.expected_reuse_window_tokens / 6.0, 120.0)  # Long reuse windows imply delayed need, so they bias toward eviction
         if block.recompute_ok:
-            score += 30.0
+            score += 30.0  # Recompute-friendly blocks can be sacrificed because recovery cost is acceptable
         if block.compression_ok:
-            score += 20.0
+            score += 20.0  # Compressible blocks are easier to demote because another space-saving path exists
         if block.is_draft and not block.is_committed:
-            score += 45.0
+            score += 45.0  # Uncommitted draft state is speculative, so it is intentionally easier to evict
         if block.recompute_cost_us is not None:
-            score -= min(block.recompute_cost_us / 40.0, 180.0)
-        score -= block.recency_score * 60.0
+            score -= min(block.recompute_cost_us / 40.0, 180.0)  # Expensive recovery subtracts score to protect costly blocks
+        score -= block.recency_score * 60.0  # Recently touched blocks lose score because fresh access suggests near-term reuse
         access_age = max(current_step - block.last_access_step, 0)
-        score += min(access_age / 4.0, 35.0)
-        score -= max(block.eviction_risk_score(current_step), 0.0) / 40.0
+        score += min(access_age / 4.0, 35.0)  # Older untouched blocks slowly become more disposable over time
+        score -= max(block.eviction_risk_score(current_step), 0.0) / 40.0  # Global eviction risk subtracts score to keep semantically important blocks safe
         return score
 
     def choose_victim(
@@ -193,34 +196,34 @@ class DeadlineAwarePolicy(IntentAwarePolicy):
         # Near-deadline blocks should be heavily protected.
         if block.deadline_us is not None:
             if block.deadline_us <= 1_000:
-                score -= 320.0
+                score -= 320.0  # Extremely near deadlines get a large negative term so they almost never become victims
             elif block.deadline_us <= 5_000:
-                score -= 140.0
+                score -= 140.0  # Moderately near deadlines still receive strong protection against eviction
             else:
-                score -= 25.0
+                score -= 25.0  # Even relaxed deadlines shave score because time-bounded work should not look purely cold
 
         # Explicit slack is even stronger than raw deadline when available.
         if block.slack_us is not None:
             if block.slack_us <= 500:
-                score -= 260.0
+                score -= 260.0  # Tiny slack means almost no room for miss recovery, so the block is heavily protected
             elif block.slack_us <= 2_000:
-                score -= 120.0
+                score -= 120.0  # Narrow slack windows still need substantial protection, though less absolute than imminent misses
 
         if block.request_priority >= 80:
-            score -= 90.0
+            score -= 90.0  # High-priority requests surrender score so background work gives way before interactive work
         if block.recompute_cost_us is not None and block.recompute_cost_us >= 4_000:
-            score -= 80.0
+            score -= 80.0  # High recompute cost means eviction would be expensive, so subtract score to discourage it
         if block.phase == Phase.DECODE:
-            score -= 110.0
+            score -= 110.0  # Decode-phase state is latency-sensitive, so it receives an extra protection term
         if block.priority == Priority.DECODE_CRITICAL:
-            score -= 400.0
+            score -= 400.0  # Decode-critical priority gets a large negative term so it dominates over generic coldness signals
 
         # Low-risk blocks become the preferred victims.
-        score -= risk / 18.0
+        score -= risk / 18.0  # The aggregate risk score subtracts from eviction score to reflect deadline, priority, and recompute danger
         if block.phase == Phase.DONE:
-            score += 40.0
+            score += 40.0  # DONE blocks regain some positive score because post-request state should still drain out first
         if block.priority == Priority.COLD and block.deadline_us is None:
-            score += 35.0
+            score += 35.0  # Deadline-free cold blocks are intentionally nudged upward as preferred capacity relief
         return score
 
     def should_prefetch(self, block: MemoryIntent, current_step: int) -> bool:

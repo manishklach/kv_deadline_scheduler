@@ -110,6 +110,7 @@ class KVMemorySimulator:
         self.decode_critical_evictions = 0
         self.peak_hbm_demand_bytes = 0
         self.actual_peak_hbm_used_bytes = 0
+        self.last_decay_step = -1
 
     def _used_bytes(self, ids: Iterable[str]) -> int:
         return sum(self.live_blocks[object_id].size_bytes for object_id in ids if object_id in self.live_blocks)
@@ -195,34 +196,47 @@ class KVMemorySimulator:
         self._record_usage()
         return added_latency
 
-    def _merge_intent(self, existing: MemoryIntent, incoming: MemoryIntent) -> MemoryIntent:
-        return existing.copy_with(
-            request_id=incoming.request_id,
-            block_id=incoming.block_id,
-            object_type=incoming.object_type,
-            phase=incoming.phase,
-            priority=incoming.priority,
-            allowed_tiers=set(incoming.allowed_tiers),
-            current_tier=incoming.current_tier,
-            size_bytes=incoming.size_bytes,
-            request_priority=incoming.request_priority,
-            recency_score=incoming.recency_score,
-            deadline_us=incoming.deadline_us,
-            slack_us=incoming.slack_us,
-            arrival_step=incoming.arrival_step,
-            target_decode_step=incoming.target_decode_step,
-            expected_reuse_window_tokens=incoming.expected_reuse_window_tokens,
-            recompute_cost_us=incoming.recompute_cost_us,
-            spill_cost_us=incoming.spill_cost_us,
-            compression_ok=incoming.compression_ok,
-            recompute_ok=incoming.recompute_ok,
-            prefetch_ok=incoming.prefetch_ok,
-            pin_requested=incoming.pin_requested,
-            is_draft=incoming.is_draft,
-            is_committed=incoming.is_committed,
-            created_step=incoming.created_step,
-            last_access_step=incoming.last_access_step,
-        )
+    def _merge_intent(
+        self,
+        existing: MemoryIntent,
+        incoming: MemoryIntent,
+        fields: set[str] | None = None,
+    ) -> MemoryIntent:
+        if fields is None:
+            fields = {
+                "request_id",
+                "block_id",
+                "object_type",
+                "phase",
+                "priority",
+                "allowed_tiers",
+                "current_tier",
+                "size_bytes",
+                "request_priority",
+                "recency_score",
+                "deadline_us",
+                "slack_us",
+                "arrival_step",
+                "target_decode_step",
+                "expected_reuse_window_tokens",
+                "recompute_cost_us",
+                "spill_cost_us",
+                "compression_ok",
+                "recompute_ok",
+                "prefetch_ok",
+                "pin_requested",
+                "is_draft",
+                "is_committed",
+                "created_step",
+                "last_access_step",
+            }
+        updates: dict[str, object] = {}
+        for field in fields:
+            value = getattr(incoming, field)
+            if field == "allowed_tiers":
+                value = set(value)
+            updates[field] = value
+        return existing.copy_with(**updates)
 
     def run(self, events: list[MemoryIntentEvent]) -> SimulationResult:
         for event in events:
@@ -230,7 +244,46 @@ class KVMemorySimulator:
             intent = event.intent.copy_with()
             existing = self.live_blocks.get(intent.object_id)
             if existing is not None:
-                intent = self._merge_intent(existing, intent)
+                merge_fields = None
+                if event.event_type == EventType.MARKED_DECODE_CRITICAL:
+                    merge_fields = {
+                        "priority",
+                        "phase",
+                        "pin_requested",
+                        "deadline_us",
+                        "slack_us",
+                        "target_decode_step",
+                        "expected_reuse_window_tokens",
+                        "request_priority",
+                        "recency_score",
+                    }
+                elif event.event_type == EventType.MARKED_COLD:
+                    merge_fields = {
+                        "priority",
+                        "phase",
+                        "deadline_us",
+                        "slack_us",
+                        "compression_ok",
+                        "recompute_ok",
+                        "prefetch_ok",
+                        "recency_score",
+                    }
+                elif event.event_type == EventType.ACCESSED:
+                    merge_fields = {
+                        "last_access_step",
+                        "recency_score",
+                        "phase",
+                        "priority",
+                        "deadline_us",
+                        "slack_us",
+                        "target_decode_step",
+                        "expected_reuse_window_tokens",
+                        "pin_requested",
+                        "prefetch_ok",
+                    }
+                elif event.event_type == EventType.COMMITTED:
+                    merge_fields = {"is_committed", "is_draft"}
+                intent = self._merge_intent(existing, intent, fields=merge_fields)
 
             if event.event_type == EventType.ALLOCATED:
                 self.live_blocks[intent.object_id] = intent
@@ -339,9 +392,11 @@ class KVMemorySimulator:
                 self.hbm_blocks.discard(intent.object_id)
                 self.dram_blocks.discard(intent.object_id)
 
-            for object_id, block in list(self.live_blocks.items()):
-                updated_score = max(block.recency_score - 0.03, 0.0)
-                self.live_blocks[object_id] = block.copy_with(recency_score=updated_score)
+            if event.step != self.last_decay_step:
+                for object_id, block in list(self.live_blocks.items()):
+                    updated_score = max(block.recency_score - 0.03, 0.0)
+                    self.live_blocks[object_id] = block.copy_with(recency_score=updated_score)
+            self.last_decay_step = event.step
 
             self.latencies.append(latency)
 

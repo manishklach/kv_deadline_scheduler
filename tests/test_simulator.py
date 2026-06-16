@@ -1,6 +1,8 @@
 from pathlib import Path
 
+from kv_memory_intent.events import MemoryIntentEvent
 from kv_memory_intent.metrics import SWEEP_COLUMNS, compare_results, write_sweep_csv
+from kv_memory_intent.schema import EventType, MemoryIntent, ObjectType, Phase, Priority, Tier
 from kv_memory_intent.simulator import KVMemorySimulator, generate_synthetic_kv_workload, policy_from_name
 
 
@@ -85,3 +87,73 @@ def test_decision_log_gets_written(tmp_path: Path):
     simulator.write_decision_log(out)
     assert out.exists()
     assert out.read_text(encoding="utf-8").strip()
+
+
+def test_recency_decay_is_applied_once_per_unique_step():
+    base_intent = MemoryIntent(
+        object_id="req-1:block:0",
+        request_id="req-1",
+        block_id=0,
+        object_type=ObjectType.KV_CACHE,
+        phase=Phase.PREFILL,
+        priority=Priority.WARM,
+        allowed_tiers={Tier.HBM, Tier.DRAM},
+        current_tier=Tier.HBM,
+        size_bytes=1024,
+        recency_score=0.5,
+    )
+    one_event_result = KVMemorySimulator(policy_from_name("lru"), 8 * 1024, 64 * 1024)
+    one_event_result.run(
+        [MemoryIntentEvent(step=1, event_type=EventType.ALLOCATED, intent=base_intent)]
+    )
+    single_decay = one_event_result.live_blocks["req-1:block:0"].recency_score
+
+    two_event_result = KVMemorySimulator(policy_from_name("lru"), 8 * 1024, 64 * 1024)
+    two_event_result.run(
+        [
+            MemoryIntentEvent(step=1, event_type=EventType.ALLOCATED, intent=base_intent),
+            MemoryIntentEvent(
+                step=1,
+                event_type=EventType.ALLOCATED,
+                intent=base_intent.copy_with(object_id="req-1:block:1", block_id=1),
+            ),
+        ]
+    )
+    same_step_decay = two_event_result.live_blocks["req-1:block:0"].recency_score
+    assert same_step_decay == single_decay
+
+
+def test_marked_cold_does_not_overwrite_size_or_recompute_cost():
+    allocated = MemoryIntent(
+        object_id="req-2:block:0",
+        request_id="req-2",
+        block_id=0,
+        object_type=ObjectType.KV_CACHE,
+        phase=Phase.PREFILL,
+        priority=Priority.HOT,
+        allowed_tiers={Tier.HBM, Tier.DRAM},
+        current_tier=Tier.HBM,
+        size_bytes=8192,
+        recompute_cost_us=9000,
+        recency_score=0.6,
+    )
+    marked_cold = allocated.copy_with(
+        phase=Phase.IDLE,
+        priority=Priority.COLD,
+        size_bytes=1024,
+        recompute_cost_us=100,
+        compression_ok=True,
+        recompute_ok=True,
+        prefetch_ok=True,
+        recency_score=0.1,
+    )
+    simulator = KVMemorySimulator(policy_from_name("lru"), 64 * 1024, 256 * 1024)
+    simulator.run(
+        [
+            MemoryIntentEvent(step=0, event_type=EventType.ALLOCATED, intent=allocated),
+            MemoryIntentEvent(step=1, event_type=EventType.MARKED_COLD, intent=marked_cold),
+        ]
+    )
+    block = simulator.live_blocks["req-2:block:0"]
+    assert block.size_bytes == 8192
+    assert block.recompute_cost_us == 9000

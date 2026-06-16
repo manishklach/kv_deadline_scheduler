@@ -4,13 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kv-deadline-scheduler"
-version = "0.1.0"
+version = "0.2.0"
 description = "Runtime-declared memory intent for KV-cache orchestration."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
-authors = [{name = "OpenAI Codex"}]
+authors = [{name = "Manish KL"}]
 dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
 
 [project.scripts]
 kvmi = "kv_memory_intent.cli:main"

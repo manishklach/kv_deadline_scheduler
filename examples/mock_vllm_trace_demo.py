@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 from kv_memory_intent.adapters import generate_mock_vllm_trace
@@ -10,7 +11,10 @@ from kv_memory_intent.simulator import KVMemorySimulator, policy_from_name
 
 
 def main() -> None:
-    recorder = generate_mock_vllm_trace(num_requests=8, decode_steps=128, seed=42)
+    parser = argparse.ArgumentParser(description="Generate and replay a mock serving-trace demo.")
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
+    recorder = generate_mock_vllm_trace(num_requests=8, decode_steps=128, seed=args.seed)
     out = Path(__file__).with_name("mock_vllm_trace.jsonl")
     recorder.to_jsonl(out)
     summary = recorder.summary()
