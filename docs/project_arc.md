@@ -43,16 +43,45 @@ It provides a controlled way to compare:
 
 The simulator reports simulated p50, p95, and p99 latency, decode-critical misses, evictions, spills, prefetches, and HBM pressure behavior. Those metrics are enough to test whether richer intent changes which blocks get protected.
 
-## Why I/O Priority Is the First Kernel-Adjacent Bridge
+## Staged Kernel Paths
 
-If KV intent matters before spill, it may also matter after spill.
+```text
+External KV pressure profiler
+        |
+        v
+Deadline-aware KV policy simulator
+        |
+        v
+VM path: madvise / DAMON / MGLRU / zswap / tiering
+        |
+        v
+I/O path: io_uring / ioprio / mq-deadline if KV spills to storage
+        |
+        v
+future kernel research
+```
 
-The first kernel-adjacent bridge is not a kernel patch. It is a userspace mapping from KV intent to coarse I/O classes:
+## Why the VM Path Comes Before the I/O Path
 
-- decode-critical KV prefetch becomes a more urgent read
-- cold KV spill becomes a lower-priority write
+If KV intent matters before spill, the first kernel-facing question is often about page residency rather than storage scheduling.
 
-That is why the repository now includes a Linux-first userspace I/O priority benchmark. It emulates a future spill and prefetch backend and asks whether separating critical reads from background writes helps preserve critical-read p99 under storage pressure.
+The VM path is the closer conceptual match for MEXT-like memory expansion:
+
+- `madvise`
+- DAMON and DAMOS
+- MGLRU
+- zswap and swap
+- memory tiering, NUMA, and CXL
+
+That path asks which KV-backed pages should stay resident, which are reclaim candidates, and which may tolerate colder tiers.
+
+The repository now includes a `kernel_vm/` track for these experiments and notes.
+
+## Why I/O Priority Is the Second Kernel-Adjacent Bridge
+
+If KV state spills or prefetch reaches storage, the next question is about I/O urgency.
+
+That is where the Linux-first userspace I/O priority benchmark fits. It emulates a future spill and prefetch backend and asks whether separating critical reads from background writes helps preserve critical-read p99 under storage pressure.
 
 ## Why Kernel Scheduler Changes Are Future Work
 
@@ -68,8 +97,8 @@ Instead, it defines a staged path:
 
 1. External profiling
 1. Deadline-aware simulation
-1. Userspace I/O class emulation
-1. Optional future experiments with `io_uring`, cgroups, or scheduler hints
-1. Only then, if justified, a research-only kernel patch experiment
+1. VM path: `madvise`, DAMON, MGLRU, zswap, and tiering experiments
+1. I/O path: `io_uring`, `ioprio`, and `mq-deadline`-adjacent experiments if KV spills to storage
+1. Only then, if justified, research-only kernel patch experiments
 
 That sequence keeps the project grounded while still opening an ambitious systems research direction.

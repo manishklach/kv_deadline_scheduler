@@ -37,8 +37,9 @@ KV Deadline Scheduler explores a staged path:
 - Runtime or request layer: KV blocks have request priority, phase, deadline, recompute cost, and spillability.
 - External profiler layer: estimate KV pressure from request traces, model config, token counts, and telemetry.
 - Scheduler layer: compare LRU, HotCold, PredictiveHotness, IntentAware, and DeadlineAware policies.
-- I/O bridge layer: map KV intent to I/O classes such as decode-critical prefetch and background spill.
-- Kernel research layer: evaluate whether Linux I/O scheduling can preserve critical-read p99 under spill pressure.
+- VM path: map KV intent to `madvise`, DAMON, reclaim, zswap, and memory-tiering questions.
+- I/O path: map KV intent to I/O classes such as decode-critical prefetch and background spill.
+- Kernel research layer: evaluate whether Linux VM and I/O behavior can preserve the right KV state under pressure.
 
 ```text
 LLM serving traces / telemetry
@@ -51,6 +52,9 @@ MemoryIntentEvent JSONL
         |
         v
 Deadline-aware KV policy simulator
+        |
+        v
+VM path: madvise / DAMON / MGLRU / zswap / tiering
         |
         v
 KV I/O classes
@@ -69,13 +73,13 @@ More background:
 
 ## Two Experiments
 
-Experiment A: KV policy simulation
+### Experiment A: KV Policy Simulation
 
 - Input: synthetic or imported request trace
 - Output: policy comparison table
 - Measures: simulated p50, p95, and p99 latency, decode-critical misses, evictions, spills
 
-Experiment B: Linux I/O priority emulation
+### Experiment B: Linux I/O Priority Emulation
 
 - Input: synthetic critical-read and background-write workload
 - Output: critical-read latency under mixed I/O pressure
@@ -104,6 +108,18 @@ Experiment B: Linux I/O priority emulation
 Linux `mq-deadline` handles storage request deadlines. KV Deadline Scheduler handles AI request-state deadlines.
 
 A future bridge can map KV intent to I/O priorities or scheduler hints, but that bridge is still a roadmap item. There is no kernel patch implemented here and no claim of Linux scheduler improvement yet.
+
+## VM / Memory-Management Track
+
+KV Deadline Scheduler has two kernel-facing paths.
+
+The VM path is closest to MEXT-like memory expansion: decide which KV-like pages stay resident, which are reclaimed, and which are candidates for cold pageout or compressed or swapped tiers. This track explores existing Linux VM mechanisms such as `madvise`, DAMON, MGLRU, zswap or swap, and memory tiering.
+
+The I/O path begins after KV has become storage traffic and explores whether decode-critical prefetch reads should be prioritized over background spill writes.
+
+See:
+
+- [`kernel_vm/`](kernel_vm/)
 
 ## Quickstart
 
@@ -236,5 +252,6 @@ See:
 | `tests/` | Regression coverage for schema, simulator behavior, adapters, and CLI-facing flows. |
 | `examples/` | Small demos for policy comparison, synthetic traces, plotting, and mock serving traces. |
 | `experiments/linux_io_priority/` | Linux-first userspace I/O priority emulation benchmark and result notes. |
+| `kernel_vm/` | Linux VM and memory-management research track, including `madvise` and DAMON experiments. |
 | `docs/` | Architecture notes, project arc, reproducibility guidance, release notes, and research-track docs. |
 | `integrations/external_trace/` | Request-trace and telemetry format notes for external profiling workflows. |
