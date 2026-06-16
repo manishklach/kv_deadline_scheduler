@@ -64,6 +64,12 @@ Simulated latency, miss, spill, and pressure metrics
 - Simulated p50, p95, and p99 metrics
 - Docs for external trace import and optional runtime instrumentation
 
+## Relationship to Linux Deadline I/O Scheduling
+
+Linux `mq-deadline` handles storage request deadlines. KV Deadline Scheduler handles AI request-state deadlines.
+
+A future bridge can map KV intent to I/O priorities or scheduler hints, but that bridge is still a roadmap item. There is no kernel patch implemented here and no claim of Linux scheduler improvement yet.
+
 ## Quickstart
 
 Install the package and run the test suite:
@@ -235,4 +241,3 @@ Near-term milestones:
 | `examples/` | Small demos for policy comparison, synthetic traces, plotting, and mock serving traces. |
 | `docs/` | Architecture notes, release notes, roadmap, optional instrumentation docs, and diagrams. |
 | `integrations/external_trace/` | Request-trace and telemetry format notes for external profiling workflows. |
-
