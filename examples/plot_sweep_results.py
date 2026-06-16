@@ -17,14 +17,21 @@ def main() -> None:
     parser.add_argument("csv_path")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
+    csv_path = Path(args.csv_path)
+    if not csv_path.exists():
+        raise SystemExit(f"CSV file not found: {csv_path}")
+    if not csv_path.is_file():
+        raise SystemExit(f"CSV path is not a file: {csv_path}")
+    if csv_path.stat().st_size == 0:
+        raise SystemExit(f"CSV file is empty: {csv_path}")
 
     try:
         import matplotlib.pyplot as plt  # type: ignore
     except ImportError:
         print("matplotlib is optional. Install it with: pip install matplotlib")
-        return
+        raise SystemExit(1)
 
-    rows = load_rows(Path(args.csv_path))
+    rows = load_rows(csv_path)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     policies = sorted({row["policy"] for row in rows})
@@ -50,6 +57,7 @@ def main() -> None:
         "decode_critical_evictions_vs_hbm.png",
         "Decode-critical evictions",
     )
+    print(f"Wrote 3 plots to {out_dir}")
 
 
 if __name__ == "__main__":

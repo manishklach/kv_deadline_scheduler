@@ -12,7 +12,7 @@ from kv_memory_intent.simulator import KVMemorySimulator, policy_from_name
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate and replay a mock serving-trace demo.")
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=42, help="RNG seed for reproducible synthetic traces (default: 42)")
     args = parser.parse_args()
     recorder = generate_mock_vllm_trace(num_requests=8, decode_steps=128, seed=args.seed)
     out = Path(__file__).with_name("mock_vllm_trace.jsonl")

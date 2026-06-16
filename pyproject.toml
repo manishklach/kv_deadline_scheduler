@@ -4,16 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kv-deadline-scheduler"
-version = "0.4.0"
+version = "0.3.0"
 description = "Deadline-aware KV-cache scheduling for protecting decode-critical request-state under long-context LLM inference pressure."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Manish KL" }]
+authors = [{ name = "Manish Klach" }]
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "matplotlib>=3.8"]
+
+[project.urls]
+Source = "https://github.com/manishklach/kv_deadline_scheduler"
 
 [project.scripts]
 kvmi = "kv_memory_intent.cli:main"

@@ -12,6 +12,7 @@ def test_simulator_returns_valid_result():
     assert result.policy_name == "LRU"
     assert result.total_blocks > 0
     assert result.total_steps > 0
+    assert 0.0 <= result.decode_critical_miss_rate <= 1.0
 
 
 def test_hbm_capacity_is_respected():
@@ -52,6 +53,7 @@ def test_compare_table_includes_all_policy_names():
     assert "PredictiveHotness" in table
     assert "IntentAware" in table
     assert "KVDeadline" in table
+    assert "Decode-critical miss rate" in table
 
 
 def test_sweep_output_csv_contains_expected_columns(tmp_path: Path):
@@ -89,7 +91,7 @@ def test_decision_log_gets_written(tmp_path: Path):
     assert out.read_text(encoding="utf-8").strip()
 
 
-def test_recency_decay_is_applied_once_per_unique_step():
+def test_recency_decay_is_per_step_not_per_event():
     base_intent = MemoryIntent(
         object_id="req-1:block:0",
         request_id="req-1",
@@ -102,25 +104,35 @@ def test_recency_decay_is_applied_once_per_unique_step():
         size_bytes=1024,
         recency_score=0.5,
     )
-    one_event_result = KVMemorySimulator(policy_from_name("lru"), 8 * 1024, 64 * 1024)
-    one_event_result.run(
+    same_step_simulator = KVMemorySimulator(policy_from_name("lru"), 8 * 1024, 64 * 1024)
+    same_step_simulator.run(
         [MemoryIntentEvent(step=1, event_type=EventType.ALLOCATED, intent=base_intent)]
     )
-    single_decay = one_event_result.live_blocks["req-1:block:0"].recency_score
+    score_after_step_1 = same_step_simulator.live_blocks["req-1:block:0"].recency_score
 
-    two_event_result = KVMemorySimulator(policy_from_name("lru"), 8 * 1024, 64 * 1024)
-    two_event_result.run(
+    same_step_simulator.run(
         [
-            MemoryIntentEvent(step=1, event_type=EventType.ALLOCATED, intent=base_intent),
             MemoryIntentEvent(
-                step=1,
-                event_type=EventType.ALLOCATED,
-                intent=base_intent.copy_with(object_id="req-1:block:1", block_id=1),
+                step=1, event_type=EventType.ACCESSED, intent=base_intent.copy_with(recency_score=score_after_step_1)
             ),
         ]
     )
-    same_step_decay = two_event_result.live_blocks["req-1:block:0"].recency_score
-    assert same_step_decay == single_decay
+    score_after_second_event_same_step = same_step_simulator.live_blocks["req-1:block:0"].recency_score
+
+    next_step_simulator = KVMemorySimulator(policy_from_name("lru"), 8 * 1024, 64 * 1024)
+    next_step_simulator.run(
+        [MemoryIntentEvent(step=1, event_type=EventType.ALLOCATED, intent=base_intent)]
+    )
+    next_step_simulator.run(
+        [
+            MemoryIntentEvent(
+                step=2, event_type=EventType.ACCESSED, intent=base_intent.copy_with(recency_score=score_after_step_1)
+            ),
+        ]
+    )
+    score_after_next_step = next_step_simulator.live_blocks["req-1:block:0"].recency_score
+
+    assert score_after_second_event_same_step > score_after_next_step
 
 
 def test_marked_cold_does_not_overwrite_size_or_recompute_cost():

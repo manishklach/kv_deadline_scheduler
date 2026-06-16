@@ -60,10 +60,10 @@ def compare_results(results: list["SimulationResult"]) -> str:
     baseline = next((result for result in results if result.policy_name == "LRU"), results[0])
     header = (
         "| Policy | P50 latency | P95 latency | P99 latency | Misses | Decode-critical misses | "
-        "Evictions | Decode-critical evictions | Spills | Prefetches | HBM saved | "
+        "Decode-critical miss rate | Evictions | Decode-critical evictions | Spills | Prefetches | HBM saved | "
         "P99 improvement vs LRU | Decode-critical miss reduction vs LRU |"
     )
-    separator = "|" + "|".join(["---"] * 13) + "|"
+    separator = "|" + "|".join(["---"] * 14) + "|"
     rows = [header, separator]
     for result in results:
         p99_improvement = (
@@ -87,6 +87,7 @@ def compare_results(results: list["SimulationResult"]) -> str:
                     f"{result.p99_latency_us:.1f} us",
                     str(result.miss_count),
                     str(result.decode_critical_misses),
+                    f"{result.decode_critical_miss_rate:.3f}",
                     str(result.eviction_count),
                     str(result.decode_critical_evictions),
                     str(result.spill_count),

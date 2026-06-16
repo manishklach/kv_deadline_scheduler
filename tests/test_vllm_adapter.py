@@ -54,6 +54,15 @@ def test_mock_vllm_trace_has_non_empty_events():
     assert recorder.events
 
 
+def test_slack_scales_with_deadline_not_hardcoded():
+    adapter = VLLMIntentAdapter()
+    short = adapter.on_block_allocated(step=1, request_id="req-short", block_id=0, deadline_us=1000)
+    long = adapter.on_block_allocated(step=1, request_id="req-long", block_id=0, deadline_us=10000)
+    assert short.intent.slack_us is not None
+    assert long.intent.slack_us is not None
+    assert long.intent.slack_us > short.intent.slack_us
+
+
 def test_running_simulator_on_mock_trace_produces_valid_result():
     recorder = generate_mock_vllm_trace(num_requests=4, decode_steps=16, seed=7)
     result = KVMemorySimulator(policy_from_name("deadline"), 8 * 1024 * 1024, 32 * 1024 * 1024).run(

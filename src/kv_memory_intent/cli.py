@@ -99,6 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="balanced",
         help="Synthetic workload profile.",
     )
+    generate.add_argument("--seed", type=int, default=42, help="RNG seed for reproducible synthetic traces (default: 42)")
 
     simulate = subparsers.add_parser(
         "simulate",
@@ -121,7 +122,9 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--hbm-mb", type=int, default=512)
     compare.add_argument("--dram-mb", type=int, default=4096)
     compare.add_argument("--decision-log-dir", help="Optional directory for per-policy decision logs.")
-    compare.add_argument("--seed", type=int, default=42, help="Seed value (default: 42, set for reproducibility).")
+    compare.add_argument(
+        "--seed", type=int, default=42, help="RNG seed for reproducible synthetic traces (default: 42)"
+    )
 
     inspect = subparsers.add_parser(
         "inspect",
@@ -142,6 +145,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["balanced", "deadline_pressure", "rag_mixed_priority", "speculative_decode", "long_context_extreme"],
         default="balanced",
     )
+    demo.add_argument("--seed", type=int, default=42, help="RNG seed for reproducible synthetic traces (default: 42)")
 
     mock_vllm = subparsers.add_parser(
         "mock-vllm",
@@ -154,7 +158,9 @@ def build_parser() -> argparse.ArgumentParser:
     mock_vllm.add_argument("--compare", action="store_true")
     mock_vllm.add_argument("--hbm-mb", type=int, default=128)
     mock_vllm.add_argument("--dram-mb", type=int, default=2048)
-    mock_vllm.add_argument("--seed", type=int, default=42, help="Seed value (default: 42, set for reproducibility).")
+    mock_vllm.add_argument(
+        "--seed", type=int, default=42, help="RNG seed for reproducible synthetic traces (default: 42)"
+    )
 
     estimate = subparsers.add_parser(
         "estimate-kv",
@@ -221,10 +227,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["balanced", "deadline_pressure", "rag_mixed_priority", "speculative_decode", "long_context_extreme"],
         default="balanced",
     )
+    sweep.add_argument("--seed", type=int, default=42, help="RNG seed for reproducible synthetic traces (default: 42)")
     return parser
 
 
-def _default_trace(profile: WorkloadProfile, compact: bool = False) -> IntentTraceRecorder:
+def _default_trace(profile: WorkloadProfile, seed: int = 42, compact: bool = False) -> IntentTraceRecorder:
     recorder = IntentTraceRecorder()
     recorder.extend(
         generate_synthetic_kv_workload(
@@ -232,7 +239,7 @@ def _default_trace(profile: WorkloadProfile, compact: bool = False) -> IntentTra
             blocks_per_request=8 if compact else 12,
             block_size_bytes=16 * 1024,
             decode_steps=90 if compact else 180,
-            seed=42,
+            seed=seed,
             profile=profile,
         )
     )
@@ -265,7 +272,7 @@ def _simulate(trace: IntentTraceRecorder, policy_name: str, hbm_mb: int, dram_mb
 
 def _load_trace(args: argparse.Namespace) -> IntentTraceRecorder:
     if getattr(args, "demo", False):
-        return _default_trace(args.profile, compact=getattr(args, "command", "") == "sweep")
+        return _default_trace(args.profile, seed=getattr(args, "seed", 42), compact=getattr(args, "command", "") == "sweep")
     return IntentTraceRecorder.from_jsonl(args.trace)
 
 
@@ -344,6 +351,7 @@ def main() -> None:
                 blocks_per_request=args.blocks_per_request,
                 block_size_bytes=args.block_kb * 1024,
                 decode_steps=args.decode_steps,
+                seed=args.seed,
                 profile=args.profile,
             )
         )
@@ -393,7 +401,7 @@ def main() -> None:
         return
 
     if args.command == "demo":
-        trace = _default_trace(args.profile)
+        trace = _default_trace(args.profile, seed=args.seed)
         print(trace.print_summary())
         print()
         results = []

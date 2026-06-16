@@ -49,6 +49,7 @@ class SimulationResult:
     p95_latency_us: float
     p99_latency_us: float
     decode_critical_misses: int
+    decode_critical_miss_rate: float
     decode_critical_evictions: int
     final_hbm_used_bytes: int
     final_dram_used_bytes: int
@@ -72,6 +73,7 @@ class SimulationResult:
             "p95_latency_us": self.p95_latency_us,
             "p99_latency_us": self.p99_latency_us,
             "decode_critical_misses": self.decode_critical_misses,
+            "decode_critical_miss_rate": self.decode_critical_miss_rate,
             "decode_critical_evictions": self.decode_critical_evictions,
             "final_hbm_used_bytes": self.final_hbm_used_bytes,
             "final_dram_used_bytes": self.final_dram_used_bytes,
@@ -110,7 +112,7 @@ class KVMemorySimulator:
         self.decode_critical_evictions = 0
         self.peak_hbm_demand_bytes = 0
         self.actual_peak_hbm_used_bytes = 0
-        self.last_decay_step = -1
+        self._last_decay_step: int = -1
 
     def _used_bytes(self, ids: Iterable[str]) -> int:
         return sum(self.live_blocks[object_id].size_bytes for object_id in ids if object_id in self.live_blocks)
@@ -392,18 +394,20 @@ class KVMemorySimulator:
                 self.hbm_blocks.discard(intent.object_id)
                 self.dram_blocks.discard(intent.object_id)
 
-            if event.step != self.last_decay_step:
+            if event.step != self._last_decay_step:
                 for object_id, block in list(self.live_blocks.items()):
                     updated_score = max(block.recency_score - 0.03, 0.0)
                     self.live_blocks[object_id] = block.copy_with(recency_score=updated_score)
-            self.last_decay_step = event.step
+                self._last_decay_step = event.step
 
             self.latencies.append(latency)
 
+        total_blocks = len({event.intent.object_id for event in events})
         total_latency = sum(self.latencies)
+        decode_critical_miss_rate = min(self.decode_critical_misses / max(total_blocks, 1), 1.0)
         return SimulationResult(
             policy_name=self.policy.name,
-            total_blocks=len({event.intent.object_id for event in events}),
+            total_blocks=total_blocks,
             total_steps=max((event.step for event in events), default=0) + 1,
             hbm_capacity_bytes=self.hbm_capacity_bytes,
             dram_capacity_bytes=self.dram_capacity_bytes,
@@ -419,6 +423,7 @@ class KVMemorySimulator:
             p95_latency_us=percentile(self.latencies, 95),
             p99_latency_us=percentile(self.latencies, 99),
             decode_critical_misses=self.decode_critical_misses,
+            decode_critical_miss_rate=decode_critical_miss_rate,
             decode_critical_evictions=self.decode_critical_evictions,
             final_hbm_used_bytes=self._hbm_used(),
             final_dram_used_bytes=self._dram_used(),

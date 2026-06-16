@@ -11,7 +11,7 @@ from kv_memory_intent.trace import IntentTraceRecorder
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate a synthetic trace demo.")
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=42, help="RNG seed for reproducible synthetic traces (default: 42)")
     args = parser.parse_args()
     recorder = IntentTraceRecorder()
     recorder.extend(

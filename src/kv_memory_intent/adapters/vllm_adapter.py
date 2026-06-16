@@ -49,6 +49,18 @@ class VLLMIntentAdapter:
         self.blocks[(event.intent.request_id, event.intent.block_id)] = event.intent.copy_with()
         return event
 
+    def _compute_slack(
+        self,
+        deadline_us: int,
+        *,
+        offset: int = 0,
+        request_priority: int = 50,
+    ) -> int:
+        base = max(50, deadline_us // 5)
+        position_penalty = offset * 40
+        priority_bonus = (request_priority // 10) * 10
+        return max(50, base - position_penalty + priority_bonus)
+
     def _make_intent(
         self,
         request_id: str,
@@ -76,6 +88,11 @@ class VLLMIntentAdapter:
         )
         resolved_deadline = deadline_us if deadline_us is not None else request_meta.get("deadline_us")
         arrival_step = request_meta.get("arrival_step")
+        resolved_slack = (
+            self._compute_slack(int(resolved_deadline), offset=0, request_priority=resolved_priority)
+            if isinstance(resolved_deadline, int)
+            else None
+        )
         return MemoryIntent(
             object_id=self._object_id(request_id, block_id),
             request_id=request_id,
@@ -89,7 +106,7 @@ class VLLMIntentAdapter:
             request_priority=resolved_priority,
             recency_score=recency_score,
             deadline_us=resolved_deadline if isinstance(resolved_deadline, int) else None,
-            slack_us=(resolved_deadline - 250) if isinstance(resolved_deadline, int) else None,
+            slack_us=resolved_slack,
             arrival_step=int(arrival_step) if isinstance(arrival_step, int) else None,
             target_decode_step=None,
             expected_reuse_window_tokens=expected_reuse_window_tokens,
@@ -121,12 +138,18 @@ class VLLMIntentAdapter:
     ) -> tuple[MemoryIntent, str | None]:
         key = (request_id, block_id)
         if key in self.blocks:
+            resolved_priority = request_priority if request_priority is not None else self.blocks[key].request_priority
+            resolved_deadline = deadline_us if deadline_us is not None else self.blocks[key].deadline_us
             block = self.blocks[key].copy_with(
                 phase=phase,
                 priority=Priority.DECODE_CRITICAL if decode_critical else priority,
-                request_priority=request_priority if request_priority is not None else self.blocks[key].request_priority,
-                deadline_us=deadline_us if deadline_us is not None else self.blocks[key].deadline_us,
-                slack_us=(deadline_us - 250) if deadline_us is not None else self.blocks[key].slack_us,
+                request_priority=resolved_priority,
+                deadline_us=resolved_deadline,
+                slack_us=(
+                    self._compute_slack(resolved_deadline, offset=0, request_priority=resolved_priority)
+                    if resolved_deadline is not None
+                    else self.blocks[key].slack_us
+                ),
                 prefetch_ok=decode_critical or self.blocks[key].prefetch_ok,
                 pin_requested=decode_critical or self.blocks[key].pin_requested,
                 is_draft=is_draft if is_draft else self.blocks[key].is_draft,
@@ -274,7 +297,15 @@ class VLLMIntentAdapter:
                     pin_requested=True,
                     prefetch_ok=True,
                     deadline_us=deadline_us if deadline_us is not None else block.deadline_us,
-                    slack_us=(deadline_us - 200 - (offset * 50)) if deadline_us is not None else block.slack_us,
+                    slack_us=(
+                        self._compute_slack(
+                            deadline_us,
+                            offset=offset,
+                            request_priority=int(request_meta.get("request_priority") or 50),
+                        )
+                        if deadline_us is not None
+                        else block.slack_us
+                    ),
                     target_decode_step=step + offset,
                     expected_reuse_window_tokens=1 + offset,
                     recency_score=max(0.8, 1.0 - (offset * 0.1)),
