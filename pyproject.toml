@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kv-deadline-scheduler"
-version = "0.2.0"
-description = "Runtime-declared memory intent for KV-cache orchestration."
+version = "0.3.0"
+description = "Deadline-aware KV-cache scheduling for protecting decode-critical request-state under long-context LLM inference pressure."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
