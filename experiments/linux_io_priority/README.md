@@ -9,6 +9,8 @@ It does not test LLM inference directly. It emulates a future KV spill and prefe
 
 The goal is to test whether KV intent can be mapped to userspace I/O priority separation before touching kernel schedulers.
 
+There is no kernel patch here. This is an emulation of KV spill and prefetch I/O classes.
+
 ## What It Measures
 
 The benchmark creates two files in a configurable directory:
@@ -52,6 +54,8 @@ python experiments/linux_io_priority/kv_io_priority_bench.py \
   --dir /tmp/kvio \
   --json-out /tmp/kvio/results.json
 ```
+
+Use JSON output for reproducibility and side-by-side result capture across runs.
 
 ## Notes on Interpretation
 
