@@ -1,0 +1,14 @@
+{
+  "mode": "baseline",
+  "duration_sec": 10.314012956,
+  "critical_read_count": 102200,
+  "background_write_mbps": 1164.8230471739967,
+  "critical_read_latency_ms": {
+    "p50": 0.07052300000509604,
+    "p95": 0.17332274999546354,
+    "p99": 0.43907854999943624,
+    "max": 13.139021000000639
+  },
+  "ioprio_active": false,
+  "priority_warnings": []
+}

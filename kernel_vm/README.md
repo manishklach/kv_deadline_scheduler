@@ -92,10 +92,10 @@ These experiments are approximations. `madvise` is advisory. DAMON availability 
 
 ## Contents
 
-- [docs/vm_vs_io_kernel_tracks.md](C:/Users/ManishKL/Documents/Playground/kv-memory-intent/kernel_vm/docs/vm_vs_io_kernel_tracks.md)
-- [docs/damon_intent_bridge.md](C:/Users/ManishKL/Documents/Playground/kv-memory-intent/kernel_vm/docs/damon_intent_bridge.md)
-- [docs/madvise_kv_experiment.md](C:/Users/ManishKL/Documents/Playground/kv-memory-intent/kernel_vm/docs/madvise_kv_experiment.md)
-- [docs/mglru_reclaim_track.md](C:/Users/ManishKL/Documents/Playground/kv-memory-intent/kernel_vm/docs/mglru_reclaim_track.md)
-- [docs/zswap_swap_track.md](C:/Users/ManishKL/Documents/Playground/kv-memory-intent/kernel_vm/docs/zswap_swap_track.md)
-- [experiments/linux_vm_intent/README.md](C:/Users/ManishKL/Documents/Playground/kv-memory-intent/kernel_vm/experiments/linux_vm_intent/README.md)
-- [experiments/damon_kv_hotness/README.md](C:/Users/ManishKL/Documents/Playground/kv-memory-intent/kernel_vm/experiments/damon_kv_hotness/README.md)
+- [docs/vm_vs_io_kernel_tracks.md](docs/vm_vs_io_kernel_tracks.md)
+- [docs/damon_intent_bridge.md](docs/damon_intent_bridge.md)
+- [docs/madvise_kv_experiment.md](docs/madvise_kv_experiment.md)
+- [docs/mglru_reclaim_track.md](docs/mglru_reclaim_track.md)
+- [docs/zswap_swap_track.md](docs/zswap_swap_track.md)
+- [experiments/linux_vm_intent/README.md](experiments/linux_vm_intent/README.md)
+- [experiments/damon_kv_hotness/README.md](experiments/damon_kv_hotness/README.md)

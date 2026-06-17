@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kv-deadline-scheduler"
-version = "0.3.0"
+version = "0.5.0"
 description = "Deadline-aware KV-cache scheduling for protecting decode-critical request-state under long-context LLM inference pressure."
 readme = "README.md"
 requires-python = ">=3.11"

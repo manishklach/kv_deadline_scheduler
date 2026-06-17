@@ -23,7 +23,7 @@ python -m pytest
 
 ## Trace Format
 
-See [integrations/external_trace/request_trace_format.md](C:/Users/ManishKL/Documents/Playground/kv-memory-intent/integrations/external_trace/request_trace_format.md).
+See [integrations/external_trace/request_trace_format.md](integrations/external_trace/request_trace_format.md).
 
 ## Code Style
 

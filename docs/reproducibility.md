@@ -109,4 +109,4 @@ For the strongest signal:
 - note whether the cache state is warm or relatively cold
 - capture JSON output from both `baseline` and `separated` modes
 
-Use [results_template.md](C:/Users/ManishKL/Documents/Playground/kv-memory-intent/docs/results_template.md) to record results consistently.
+Use [results_template.md](results_template.md) to record results consistently.

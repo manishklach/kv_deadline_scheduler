@@ -1,5 +1,7 @@
 """KV Deadline Scheduler research prototype."""
 
+__version__ = "0.5.0"
+
 from .adapters import (
     VLLMIntentAdapter,
     generate_mock_vllm_trace,
@@ -63,4 +65,5 @@ __all__ = [
     "request_trace_to_intent_events",
     "write_request_trace",
     "write_sweep_csv",
+    "__version__",
 ]

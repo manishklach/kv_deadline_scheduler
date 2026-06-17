@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--duration-sec", type=float, default=10.0)
     parser.add_argument(
         "--mode",
-        choices=["baseline", "separated"],
+        choices=["baseline", "separated", "io_uring_sketch"],
         default="baseline",
     )
     parser.add_argument("--json-out", help="Optional path for JSON results.")
@@ -358,6 +358,14 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
 
 def main() -> int:
     args = parse_args()
+    if args.mode == "io_uring_sketch":
+        print(
+            "io_uring mode: not yet implemented.\n"
+            "Requires liburing and Python cffi/ctypes bindings.\n"
+            "Planned for a future release.\n"
+            "Run with --mode baseline or --mode separated instead."
+        )
+        raise SystemExit(0)
     if args.block_kb <= 0:
         raise SystemExit("--block-kb must be positive")
     if args.critical_mb <= 0 or args.background_mb <= 0:

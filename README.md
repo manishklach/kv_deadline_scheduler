@@ -68,8 +68,8 @@ Future kernel scheduler hints
 
 More background:
 
-- [docs/project_arc.md](C:/Users/ManishKL/Documents/Playground/kv-memory-intent/docs/project_arc.md)
-- [docs/kernel_io_scheduler_track.md](C:/Users/ManishKL/Documents/Playground/kv-memory-intent/docs/kernel_io_scheduler_track.md)
+- [docs/project_arc.md](docs/project_arc.md)
+- [docs/kernel_io_scheduler_track.md](docs/kernel_io_scheduler_track.md)
 
 ## Two Experiments
 
@@ -148,8 +148,8 @@ python experiments/linux_io_priority/kv_io_priority_bench.py --mode separated --
 
 For reproducible runs and result capture:
 
-- [docs/reproducibility.md](C:/Users/ManishKL/Documents/Playground/kv-memory-intent/docs/reproducibility.md)
-- [docs/results_template.md](C:/Users/ManishKL/Documents/Playground/kv-memory-intent/docs/results_template.md)
+- [docs/reproducibility.md](docs/reproducibility.md)
+- [docs/results_template.md](docs/results_template.md)
 
 ## External KV Estimation
 
@@ -241,8 +241,8 @@ This is the core thesis. Both are memory blocks, but they are not equally valuab
 
 See:
 
-- [docs/roadmap.md](C:/Users/ManishKL/Documents/Playground/kv-memory-intent/docs/roadmap.md)
-- [docs/blog_draft.md](C:/Users/ManishKL/Documents/Playground/kv-memory-intent/docs/blog_draft.md)
+- [docs/roadmap.md](docs/roadmap.md)
+- [docs/blog_draft.md](docs/blog_draft.md)
 
 ## Repository Layout
 

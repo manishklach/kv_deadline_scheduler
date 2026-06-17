@@ -57,6 +57,14 @@ python experiments/linux_io_priority/kv_io_priority_bench.py \
 
 Use JSON output for reproducibility and side-by-side result capture across runs.
 
+## Planned: `io_uring` Mode
+
+A future `--mode io_uring_sketch` will use `io_uring` for async I/O to better model NVMe prefetch latency for KV blocks.
+
+This requires `liburing` ([github.com/axboe/liburing](https://github.com/axboe/liburing)).
+
+Currently not implemented; use `--mode baseline` or `--mode separated`.
+
 ## Notes on Interpretation
 
 - Results depend heavily on filesystem, NVMe or SSD behavior, kernel version, cache state, mount options, and permissions.
