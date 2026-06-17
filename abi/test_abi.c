@@ -54,6 +54,27 @@ int main(void)
     entry.intent = intent;
     entry.timestamp_ns = 42;
 
+    if (mi_le16_to_host(mi_host_to_le16(0x1234u)) != 0x1234u) {
+        fprintf(stderr, "u16 endian roundtrip failed\n");
+        free(ring);
+        return 1;
+    }
+    if (mi_le32_to_host(mi_host_to_le32(0x12345678u)) != 0x12345678u) {
+        fprintf(stderr, "u32 endian roundtrip failed\n");
+        free(ring);
+        return 1;
+    }
+    if (mi_le64_to_host(mi_host_to_le64(0x123456789ABCDEF0ull)) != 0x123456789ABCDEF0ull) {
+        fprintf(stderr, "u64 endian roundtrip failed\n");
+        free(ring);
+        return 1;
+    }
+    if (mi_le32_to_float(mi_float_to_le32(0.5f)) != 0.5f) {
+        fprintf(stderr, "float endian roundtrip failed\n");
+        free(ring);
+        return 1;
+    }
+
     if (mi_ring_push(&ring->header, &entry) != 0) {
         fprintf(stderr, "mi_ring_push failed\n");
         free(ring);

@@ -108,12 +108,14 @@ More background:
 ## Current Capabilities
 
 - Runtime-declared KV intent schema
+- Cross-platform ABI helpers for little-endian binary wire normalization
 - KV lifecycle event tracing
 - Synthetic workload profiles
 - External request trace importer
 - OpenAI-compatible proxy log importer
 - Prometheus GPU memory telemetry importer
 - Mock vLLM-style trace generator for demos and regression tests
+- vLLM plugin smoke harness for adapter-to-plugin event validation on a fake engine surface
 - LRU, HotCold, PredictiveHotness, IntentAware, and DeadlineAware policies
 - Decision logs
 - HBM pressure sweeps
@@ -123,9 +125,10 @@ More background:
 - Docs for external trace import, optional runtime instrumentation, reproducibility, and results capture
 - Versioned C ABI for runtime-to-OS memory intent propagation
 - Disaggregated KV scheduling model for multi-node topologies
-- Speculative decoding-aware scheduling extensions
+- Speculative decoding-aware scheduling extensions with lifecycle replay and policy-suite comparison
 - QEMU-based kernel validation harness scaffolding
 - Draft paper and website artifacts
+- Reproducible benchmark suite under `benchmarks/`
 
 ## WSL Validation Snapshot
 
@@ -209,6 +212,7 @@ For reproducible runs and result capture:
 - [docs/reproducibility.md](docs/reproducibility.md)
 - [docs/results_template.md](docs/results_template.md)
 - [docs/wsl_validation_2026_06_17.md](docs/wsl_validation_2026_06_17.md)
+- [benchmarks/README.md](benchmarks/README.md)
 
 WSL is supported for Python tooling and userspace experiments, but real kernel patch validation should be done on native Linux or QEMU. See [docs/wsl_development.md](docs/wsl_development.md).
 
@@ -227,6 +231,25 @@ kvmi estimate-kv \
 ```
 
 These estimates are approximate and intended for external profiling and simulation.
+
+## Reproducible Benchmark Harness
+
+The repository includes a scripted benchmark suite under [`benchmarks/`](benchmarks/) for repeatable policy runs, latency-distribution capture, speculative policy comparison, and mock-vLLM replay.
+
+Outputs include:
+
+- `policy_metrics.csv`
+- `latency_distributions.json`
+- `speculative_metrics.json`
+- `summary.json`
+
+Run:
+
+```bash
+python benchmarks/run_reproducible_suite.py --config benchmarks/configs/default_suite.json
+```
+
+The benchmark harness is still simulator-first. It strengthens reproducibility and result capture, but it does not turn the repository into a production inference benchmark.
 
 ## External Request Trace Import
 
@@ -250,6 +273,23 @@ kvmi compare --trace imported_trace.jsonl --hbm-mb 4096 --dram-mb 65536
 ```
 
 Imported traces are intentionally approximate. They are reconstructed from external logs and model metadata, not from runtime-internal allocation events.
+
+## vLLM Integration Status
+
+The repository now includes a smoke-tested plugin harness under [`integrations/vllm/`](integrations/vllm/) that validates the adapter-to-plugin event path against a fake engine surface.
+
+That is not the same as a validated production vLLM deployment. The current status is:
+
+- no upstream vLLM patch required
+- mock engine smoke test implemented
+- JSONL event emission path exercised
+- real deployment validation still outstanding
+
+Run the smoke harness:
+
+```bash
+python integrations/vllm/smoke_test_plugin.py --out integrations/vllm/results/plugin_smoke.jsonl
+```
 
 ## Policy Matrix
 

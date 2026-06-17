@@ -1,6 +1,13 @@
 from kv_memory_intent.events import MemoryIntentEvent
 from kv_memory_intent.schema import EventType, MemoryIntent, ObjectType, Phase, Priority, Tier
-from kv_memory_intent.speculative import DraftNode, DraftTree, SpeculativeIntentPolicy, generate_speculative_workload
+from kv_memory_intent.speculative import (
+    DraftNode,
+    DraftTree,
+    SpeculativeIntentPolicy,
+    generate_speculative_lifecycle_trace,
+    generate_speculative_workload,
+    run_speculative_policy_suite,
+)
 
 
 def make_intent(object_id: str, block_id: int, draft: bool = True) -> MemoryIntent:
@@ -55,3 +62,22 @@ def test_generate_speculative_workload_produces_events():
     assert tree.nodes
     assert events
     assert events[0].event_type == EventType.ALLOCATED
+
+
+def test_generate_speculative_lifecycle_trace_includes_terminal_events():
+    tree, events, policy = generate_speculative_lifecycle_trace(seed=7)
+    assert tree.nodes
+    assert any(event.event_type == EventType.COMMITTED for event in events)
+    assert any(event.event_type == EventType.FREED for event in events)
+    assert policy.draft_blocks_freed_on_rejection >= 0
+
+
+def test_speculative_policy_suite_returns_deadline_and_speculative_results():
+    results = run_speculative_policy_suite(
+        hbm_capacity_bytes=2 * 1024 * 1024,
+        dram_capacity_bytes=32 * 1024 * 1024,
+        seed=7,
+    )
+    names = {result.policy_name for result in results}
+    assert "KVDeadline" in names
+    assert "SpeculativeIntent" in names

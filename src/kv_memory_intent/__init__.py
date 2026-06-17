@@ -24,7 +24,15 @@ from .policies import (
 from .request_trace import RequestTraceRecord, load_request_trace, write_request_trace
 from .schema import EventType, MemoryIntent, ObjectType, Phase, Priority, Tier
 from .simulator import KVMemorySimulator, SimulationResult, WorkloadProfile, generate_synthetic_kv_workload
-from .speculative import DraftNode, DraftTree, SpeculativeIntentPolicy, generate_speculative_workload
+from .speculative import (
+    DraftNode,
+    DraftTree,
+    SpeculativeBenchmarkResult,
+    SpeculativeIntentPolicy,
+    generate_speculative_lifecycle_trace,
+    generate_speculative_workload,
+    run_speculative_policy_suite,
+)
 from .trace import IntentTraceRecorder
 from .trace_importer import request_trace_to_intent_events
 
@@ -49,6 +57,7 @@ __all__ = [
     "PredictiveHotnessPolicy",
     "RequestTraceRecord",
     "SimulationResult",
+    "SpeculativeBenchmarkResult",
     "SpeculativeIntentPolicy",
     "Tier",
     "VLLMIntentAdapter",
@@ -59,6 +68,7 @@ __all__ = [
     "format_bytes",
     "generate_synthetic_kv_workload",
     "generate_mock_vllm_trace",
+    "generate_speculative_lifecycle_trace",
     "generate_speculative_workload",
     "kv_bytes_per_token",
     "load_openai_proxy_logs",
@@ -68,6 +78,7 @@ __all__ = [
     "percentile",
     "prometheus_samples_to_intent_events",
     "request_trace_to_intent_events",
+    "run_speculative_policy_suite",
     "write_request_trace",
     "write_sweep_csv",
     "__version__",

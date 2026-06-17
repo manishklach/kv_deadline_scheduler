@@ -1,18 +1,39 @@
 # vLLM Integration
 
-How to attach KV Deadline Scheduler to a running vLLM instance.
+This directory holds the optional vLLM-facing integration path for KV Deadline Scheduler.
 
-The integration goal is zero required vLLM source modification.
+The design goal is still zero required upstream vLLM source modification. The preferred architecture is to wrap engine surfaces or request telemetry, emit `MemoryIntentEvent` records, and feed those records into JSONL traces or the ABI ring buffer.
 
-High-level flow:
+## What is implemented
 
-1. wrap the engine or callback surface
-2. emit `MemoryIntentEvent` records on scheduler steps, preemption, and finish
-3. write those events into the ABI ring buffer or JSONL traces
+- A `KVIntentPlugin` shim that maps scheduler, preemption, and finish callbacks into intent events
+- Adapter helpers for sequence access, spill, and free emission
+- A local smoke harness that exercises the plugin against a fake engine surface
+- A pytest regression test for the smoke harness
+
+## What is not yet claimed
+
+- No validated production vLLM deployment
+- No published end-to-end latency numbers from a real serving stack
+- No upstream compatibility guarantee across vLLM versions
+
+## Event path
+
+1. Wrap the engine or callback surface
+2. Emit `MemoryIntentEvent` records on scheduler steps, preemption, and finish
+3. Write those events into JSONL traces or the ABI ring buffer
 
 Expected output:
 
 - active KV blocks marked as accessed
-- decode tail blocks promoted to decode-critical
+- decode-tail blocks promoted to decode-critical
 - preempted sequences marked as spilled
 - finished sequences marked as freed
+
+## Smoke harness
+
+```bash
+python integrations/vllm/smoke_test_plugin.py --out integrations/vllm/results/plugin_smoke.jsonl
+```
+
+This harness validates the plugin-to-adapter data path against a fake engine surface. It is useful for regression testing and public documentation, but it is still a harness rather than a real deployment study.

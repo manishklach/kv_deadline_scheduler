@@ -31,6 +31,20 @@ class VLLMIntentAdapter:
     def _object_id(self, request_id: str, block_id: int) -> str:
         return f"{request_id}:kv:{block_id}"
 
+    def _sequence_request_id(self, sequence: object) -> str:
+        request_id = getattr(sequence, "request_id", None) or getattr(sequence, "seq_id", None)
+        if request_id is None:
+            raise ValueError("sequence must expose request_id or seq_id")
+        return str(request_id)
+
+    def _sequence_block_ids(self, sequence: object) -> list[int]:
+        block_ids = getattr(sequence, "active_block_ids", None)
+        if block_ids is None:
+            block_ids = getattr(sequence, "block_ids", None)
+        if block_ids is None:
+            return []
+        return [int(block_id) for block_id in block_ids]
+
     def _request_defaults(self, request_id: str) -> dict[str, int | None]:
         return self.request_metadata.setdefault(
             request_id,
@@ -466,6 +480,56 @@ class VLLMIntentAdapter:
             self.blocks.pop(key, None)
         self.request_metadata.pop(request_id, None)
         return events
+
+    def emit_sequence_accesses(self, sequence: object) -> list[MemoryIntentEvent]:
+        request_id = self._sequence_request_id(sequence)
+        block_ids = self._sequence_block_ids(sequence)
+        decode_depth = int(getattr(sequence, "decode_depth", 0) or 0)
+        deadline_us = getattr(sequence, "deadline_us", None)
+        request_priority = getattr(sequence, "request_priority", None)
+        if request_id not in self.request_metadata:
+            self.on_request_scheduled(
+                step=int(getattr(sequence, "step", 0) or 0),
+                request_id=request_id,
+                request_priority=int(request_priority) if request_priority is not None else 50,
+                deadline_us=int(deadline_us) if deadline_us is not None else None,
+            )
+        if decode_depth > 0:
+            return self.on_decode_step(
+                step=int(getattr(sequence, "step", 0) or 0),
+                request_id=request_id,
+                active_block_ids=block_ids,
+                deadline_us=int(deadline_us) if deadline_us is not None else None,
+                request_priority=int(request_priority) if request_priority is not None else None,
+            )
+        return self.on_prefill_step(
+            step=int(getattr(sequence, "step", 0) or 0),
+            request_id=request_id,
+            block_ids=block_ids,
+        )
+
+    def emit_sequence_spill(self, sequence: object) -> list[MemoryIntentEvent]:
+        request_id = self._sequence_request_id(sequence)
+        step = int(getattr(sequence, "step", 0) or 0)
+        events: list[MemoryIntentEvent] = []
+        for block_id in self._sequence_block_ids(sequence):
+            key = (request_id, block_id)
+            block = self.blocks.get(key)
+            if block is None:
+                continue
+            event = MemoryIntentEvent(
+                step=step,
+                event_type=EventType.SPILLED,
+                intent=block.copy_with(current_tier=Tier.DRAM),
+                reason="sequence preempted; block spilled",
+            )
+            events.append(self._record(event))
+        return events
+
+    def emit_sequence_free(self, sequence: object) -> list[MemoryIntentEvent]:
+        request_id = self._sequence_request_id(sequence)
+        step = int(getattr(sequence, "step", 0) or 0)
+        return self.on_request_finished(step=step, request_id=request_id, block_ids=self._sequence_block_ids(sequence))
 
 
 def generate_mock_vllm_trace(

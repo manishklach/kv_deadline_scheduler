@@ -1,0 +1,42 @@
+{
+  "seed": 42,
+  "out_dir": "benchmarks/results/default_suite",
+  "policies": ["lru", "hotcold", "predictive", "intent", "deadline"],
+  "workloads": [
+    {
+      "name": "deadline_pressure",
+      "profile": "deadline_pressure",
+      "num_requests": 24,
+      "blocks_per_request": 12,
+      "block_size_bytes": 16384,
+      "decode_steps": 180,
+      "hbm_capacity_bytes": 4194304,
+      "dram_capacity_bytes": 67108864
+    },
+    {
+      "name": "rag_mixed_priority",
+      "profile": "rag_mixed_priority",
+      "num_requests": 24,
+      "blocks_per_request": 12,
+      "block_size_bytes": 16384,
+      "decode_steps": 180,
+      "hbm_capacity_bytes": 4194304,
+      "dram_capacity_bytes": 67108864
+    }
+  ],
+  "speculative": {
+    "enabled": true,
+    "acceptance_rate": 0.7,
+    "tree_width": 4,
+    "tree_depth": 3,
+    "hbm_capacity_bytes": 2097152,
+    "dram_capacity_bytes": 33554432
+  },
+  "mock_vllm": {
+    "enabled": true,
+    "num_requests": 4,
+    "decode_steps": 16,
+    "hbm_capacity_bytes": 8388608,
+    "dram_capacity_bytes": 33554432
+  }
+}
