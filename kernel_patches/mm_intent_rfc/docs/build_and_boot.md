@@ -33,6 +33,13 @@ git am 0001-mm-experimental-memory-intent-debugfs-registry.patch
 
 If developing on WSL, use WSL for patch authoring and QEMU or native Linux for runtime validation.
 
+Helper scripts in this repository:
+
+- `scripts/apply_patch1_to_linux_tree.sh <linux-tree>`
+- `scripts/qemu_smoke_boot.sh <linux-tree>`
+
+The smoke boot helper builds a tiny initramfs, boots the patched kernel in QEMU, mounts `debugfs`, writes one registration line for PID `1`, and prints the resulting `dump` output.
+
 ## Runtime Setup
 
 Mount debugfs:
@@ -52,3 +59,12 @@ Expected files:
 - `register`
 - `dump`
 - `clear`
+
+Validated example:
+
+```text
+mm_intent boot ok
+mm_intent dump begin
+1 0x100000 0x102000 0x1 1000000 90
+mm_intent dump end
+```

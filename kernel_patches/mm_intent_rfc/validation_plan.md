@@ -30,6 +30,18 @@ Do not treat the RFC patches as version-agnostic until they are validated agains
 - dump registered ranges
 - clear ranges
 
+Current status:
+
+- completed once on Linux `6.8.12` under QEMU for patch `0001`
+- verified `/sys/kernel/debug/mm_intent/register`
+- verified `/sys/kernel/debug/mm_intent/dump`
+- registered a test range for PID `1`
+- observed dump output:
+
+```text
+1 0x100000 0x102000 0x1 1000000 90
+```
+
 ## Phase 2 Later
 
 - `smaps` observability

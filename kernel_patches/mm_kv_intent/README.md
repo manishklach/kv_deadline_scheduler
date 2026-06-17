@@ -1,6 +1,6 @@
 # mm_kv_intent Patch Series
 
-This directory is an early prototype. Prefer `../mm_intent_rfc/` for the current kernel-facing design.
+This is an early KV-specific prototype. It is kept for reference. Prefer `../mm_intent_rfc/` for the current generic Linux MM design direction.
 
 This directory contains an upstream-style patch series that proposes a new `mm/kv_intent_advisor.c` subsystem.
 
@@ -45,7 +45,16 @@ After applying the series:
 2. run the `kv_madvise_experiment` under memory pressure
 3. observe whether `DECODE_CRITICAL` pages survive reclaim more often than `COLD` pages
 
-## Known Issues In `mm_kv_intent`
+## Known Issues
+
+- KV-specific kernel naming is not ideal for upstream.
+- PFN-based registration is fragile.
+- Userspace should register virtual address ranges instead.
+- Reclaim behavior changes should not be first.
+- Observability should come before `vmscan` policy.
+- This series must be validated against a pinned Linux kernel before compile or upstream claims.
+
+## Additional Prototype Notes
 
 - PFN-based registration is fragile. Userspace normally knows virtual addresses, not stable PFNs.
 - Range lookup is not correct for arbitrary PFNs when keyed only by `start_pfn`.

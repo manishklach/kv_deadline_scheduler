@@ -1,10 +1,10 @@
-From 2c32d0c79e6e1cd4d96c2fe04738fd180348b73a Mon Sep 17 00:00:00 2001
-From: Manish Klach <kv_deadline_scheduler>
-Date: Wed, 17 Jun 2026 14:00:00 -0700
+From 08a54819670aa46874afdd38c302a01bdb1b2b07 Mon Sep 17 00:00:00 2001
+From: kvds <kvds@example.invalid>
+Date: Wed, 17 Jun 2026 06:39:48 -0700
 Subject: [PATCH 1/4] mm: add experimental memory intent debugfs registry
 
-Add an RFC v0, debugfs-only memory-intent registry targeted initially at
-Linux 6.8.y.
+Add an RFC v0, debugfs-only memory-intent registry targeted and validated
+initially against Linux 6.8.12.
 
 This patch is observability-only. It does not change reclaim behavior,
 does not alter VM policy, and does not claim a stable ABI. The goal is to
@@ -26,22 +26,24 @@ Virtual-address ranges are used instead of PFNs because userspace naturally
 knows virtual addresses, while PFNs are unstable under migration and often
 hard to obtain.
 
-Signed-off-by: Manish Klach <kv_deadline_scheduler>
+This patch was compile-tested on Linux 6.8.12 and smoke-tested in QEMU
+with a successful debugfs register and dump cycle.
+
 ---
- include/linux/memory_intent.h |  38 +++++++
- mm/Kconfig                    |  15 +++
+ include/linux/memory_intent.h |  37 +++++++
+ mm/Kconfig                    |  14 +++
  mm/Makefile                   |   1 +
- mm/memory_intent.c            | 209 ++++++++++++++++++++++++++++++++++++++++++
- 4 files changed, 263 insertions(+)
+ mm/memory_intent.c            | 197 ++++++++++++++++++++++++++++++++++
+ 4 files changed, 249 insertions(+)
  create mode 100644 include/linux/memory_intent.h
  create mode 100644 mm/memory_intent.c
 
 diff --git a/include/linux/memory_intent.h b/include/linux/memory_intent.h
 new file mode 100644
-index 000000000000..04baf332d6db
+index 000000000..ae4151ca6
 --- /dev/null
 +++ b/include/linux/memory_intent.h
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,37 @@
 +#ifndef _LINUX_MEMORY_INTENT_H
 +#define _LINUX_MEMORY_INTENT_H
 +
@@ -80,12 +82,12 @@ index 000000000000..04baf332d6db
 +
 +#endif /* _LINUX_MEMORY_INTENT_H */
 diff --git a/mm/Kconfig b/mm/Kconfig
-index 18af73bbcc1e..68d35241a01c 100644
+index ffc3a2ba3..2d8abb831 100644
 --- a/mm/Kconfig
 +++ b/mm/Kconfig
-@@ -1234,6 +1234,21 @@ config ANON_VMA_NAME
- 	  Allow anonymous memory mappings to be named.  This is useful when
- 	  debugging userspace allocators and memory pressure behavior.
+@@ -1261,6 +1261,20 @@ config LOCK_MM_AND_FIND_VMA
+ config IOMMU_MM_DATA
+ 	bool
  
 +config EXPERIMENTAL_MEMORY_INTENT
 +	bool "Experimental memory intent debugfs registry"
@@ -101,27 +103,27 @@ index 18af73bbcc1e..68d35241a01c 100644
 +	  This is RFC v0 infrastructure only. It is not a stable ABI and
 +	  should not be treated as production-ready.
 +
- endmenu
+ source "mm/damon/Kconfig"
  
- menu "Memory Debugging"
+ endmenu
 diff --git a/mm/Makefile b/mm/Makefile
-index b92eb5c64548..7c3561dfb19e 100644
+index 4abb40b91..3de86e636 100644
 --- a/mm/Makefile
 +++ b/mm/Makefile
-@@ -111,6 +111,7 @@ obj-$(CONFIG_PAGE_REPORTING) += page_reporting.o
- obj-$(CONFIG_MEMORY_FAILURE) += memory-failure.o
- obj-$(CONFIG_HWPOISON_INJECT) += hwpoison-inject.o
- obj-$(CONFIG_PER_VMA_LOCK_STATS) += per_vma_lock_stats.o
+@@ -117,6 +117,7 @@ obj-$(CONFIG_CMA_DEBUGFS) += cma_debug.o
+ obj-$(CONFIG_SECRETMEM) += secretmem.o
+ obj-$(CONFIG_CMA_SYSFS) += cma_sysfs.o
+ obj-$(CONFIG_USERFAULTFD) += userfaultfd.o
 +obj-$(CONFIG_EXPERIMENTAL_MEMORY_INTENT) += memory_intent.o
- 
- KCOV_INSTRUMENT_mm-ksm.o := n
- KASAN_SANITIZE_khugepaged.o := n
+ obj-$(CONFIG_IDLE_PAGE_TRACKING) += page_idle.o
+ obj-$(CONFIG_DEBUG_PAGEALLOC) += debug_page_alloc.o
+ obj-$(CONFIG_DEBUG_PAGE_REF) += debug_page_ref.o
 diff --git a/mm/memory_intent.c b/mm/memory_intent.c
 new file mode 100644
-index 000000000000..1ed03a805fe7
+index 000000000..10258d108
 --- /dev/null
 +++ b/mm/memory_intent.c
-@@ -0,0 +1,209 @@
+@@ -0,0 +1,197 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * RFC v0 experimental memory-intent registry.
@@ -161,8 +163,8 @@ index 000000000000..1ed03a805fe7
 +}
 +
 +static ssize_t memory_intent_register_write(struct file *file,
-+					   const char __user *buffer,
-+					   size_t count, loff_t *ppos)
++					    const char __user *buffer,
++					    size_t count, loff_t *ppos)
 +{
 +	char line[MM_INTENT_LINE_MAX];
 +	struct memory_intent_entry *entry;
@@ -248,8 +250,8 @@ index 000000000000..1ed03a805fe7
 +}
 +
 +static ssize_t memory_intent_clear_write(struct file *file,
-+					const char __user *buffer,
-+					size_t count, loff_t *ppos)
++					 const char __user *buffer,
++					 size_t count, loff_t *ppos)
 +{
 +	mutex_lock(&memory_intent_lock);
 +	memory_intent_clear_all_locked();
@@ -320,4 +322,4 @@ index 000000000000..1ed03a805fe7
 +
 +fs_initcall(memory_intent_init);
 -- 
-2.47.0
+2.43.0

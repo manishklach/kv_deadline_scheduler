@@ -164,6 +164,8 @@ The repository also includes kernel-facing patch designs under:
 
 - [`kernel_patches/`](kernel_patches/)
 
+The first compile-targeted generic MM RFC patch has now been validated on Linux `6.8.12` in QEMU: the debugfs-only registry initialized, accepted a range registration, and dumped it back without changing reclaim behavior.
+
 See:
 
 - [`kernel_vm/`](kernel_vm/)

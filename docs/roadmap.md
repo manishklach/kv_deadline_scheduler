@@ -30,8 +30,9 @@ This roadmap is organized around the staged research arc of KV Deadline Schedule
 
 ## Next Kernel Patch Steps
 
-- Consolidate `mm_kv_intent` into generic `mm_intent_rfc`
-- Make patch 1 compile on a pinned Linux version
-- Add `smaps` or `debugfs` observability before policy changes
+- Consolidate the generic `mm_intent_rfc` path as the primary kernel patch direction
+- Make patch 1 compile against a pinned Linux version
+- Validate the debugfs registry with register and dump flows
+- Add `smaps` observability before policy changes
 - Add DAMON reporting integration for memory-intent visibility
 - Postpone reclaim behavior changes until observability is validated

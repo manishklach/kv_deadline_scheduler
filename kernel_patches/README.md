@@ -18,7 +18,15 @@ Three levels of kernel integration, from loadable module to RFC patch series.
 
 These are experimental loadable-module prototypes. They demonstrate kernel-side policy shapes without requiring a full kernel rebuild, but they are kernel-version-dependent and not upstream-ready.
 
-### B. RFC MM patch series
+### B. Legacy KV-specific MM prototype
+
+- `mm_kv_intent/`
+
+This is an early KV-specific prototype patch series. It is kept for historical and research reference, but it is not the preferred kernel-facing direction.
+
+It changes reclaim behavior too early, uses KV-specific naming, and assumes a registration shape that is less suitable than virtual-address ranges for userspace tooling.
+
+### C. Current generic MM RFC direction
 
 - `mm_intent_rfc/`
 
@@ -26,7 +34,15 @@ This is the current kernel-facing design track. It reframes the idea as generic 
 
 The first compile-targeted RFC patch is a debugfs-only generic memory-intent registry. It does not change reclaim behavior.
 
-### C. Future validated patch series
+That first RFC patch has now been compile-validated and smoke-booted on Linux `6.8.12` under QEMU, including a successful debugfs register and dump cycle.
+
+The design priorities are:
+
+- generic memory-intent classes
+- observability first
+- reclaim behavior later and default-off
+
+### D. Future validated patch series
 
 The eventual target is a pinned Linux version, with:
 
@@ -57,7 +73,7 @@ To test these patches:
 - use QEMU with a custom `6.6+` kernel build
 - or use a bare-metal Linux machine with module loading enabled
 
-The code in this directory is experimental and research-oriented. Some pieces are loadable-module prototypes; the upstream-style patch series is a design sketch that must be validated against a pinned Linux kernel version before any upstream-readiness claim.
+The code in this directory is experimental and research-oriented. Loadable modules are prototypes, and patch series are RFC-style sketches unless explicitly validated against a pinned Linux kernel tree.
 
 ## Design Direction
 
