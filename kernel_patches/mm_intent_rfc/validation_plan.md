@@ -21,6 +21,27 @@ Do not treat the RFC patches as version-agnostic until they are validated agains
 8. Run the DAMON workload and confirm intent appears alongside hot/cold observations
 9. Only then enable the default-off reclaim policy patch
 
+## Phase 1
+
+- build the patched kernel
+- mount `debugfs`
+- verify `register`, `dump`, and `clear`
+- register a range
+- dump registered ranges
+- clear ranges
+
+## Phase 2 Later
+
+- `smaps` observability
+
+## Phase 3 Later
+
+- DAMON reporting
+
+## Phase 4 Later
+
+- default-off reclaim policy
+
 ## Success Criteria
 
 - patch 1 compiles cleanly on the pinned tree

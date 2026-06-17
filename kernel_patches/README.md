@@ -24,6 +24,8 @@ These are experimental loadable-module prototypes. They demonstrate kernel-side 
 
 This is the current kernel-facing design track. It reframes the idea as generic Linux memory intent rather than a KV-specific kernel ABI. The patches are research-oriented RFC sketches, not upstream-ready patches.
 
+The first compile-targeted RFC patch is a debugfs-only generic memory-intent registry. It does not change reclaim behavior.
+
 ### C. Future validated patch series
 
 The eventual target is a pinned Linux version, with:

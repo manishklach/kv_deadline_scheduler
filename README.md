@@ -180,6 +180,8 @@ For reproducible runs and result capture:
 - [docs/results_template.md](docs/results_template.md)
 - [docs/wsl_validation_2026_06_17.md](docs/wsl_validation_2026_06_17.md)
 
+WSL is supported for Python tooling and userspace experiments, but real kernel patch validation should be done on native Linux or QEMU. See [docs/wsl_development.md](docs/wsl_development.md).
+
 ## External KV Estimation
 
 KV footprint estimates are based on model configuration, attention structure, token counts, and dtype width.

@@ -1,0 +1,323 @@
+From 2c32d0c79e6e1cd4d96c2fe04738fd180348b73a Mon Sep 17 00:00:00 2001
+From: Manish Klach <kv_deadline_scheduler>
+Date: Wed, 17 Jun 2026 14:00:00 -0700
+Subject: [PATCH 1/4] mm: add experimental memory intent debugfs registry
+
+Add an RFC v0, debugfs-only memory-intent registry targeted initially at
+Linux 6.8.y.
+
+This patch is observability-only. It does not change reclaim behavior,
+does not alter VM policy, and does not claim a stable ABI. The goal is to
+let userspace register virtual-address ranges with generic intent flags so
+research tooling can inspect what was tagged before any policy work is
+attempted.
+
+The interface is intentionally debugfs-only:
+
+  /sys/kernel/debug/mm_intent/register
+  /sys/kernel/debug/mm_intent/dump
+  /sys/kernel/debug/mm_intent/clear
+
+Input format for register is:
+
+  <pid> <start_vaddr_hex> <length_hex> <intent_flags_hex> <deadline_ns> <priority>
+
+Virtual-address ranges are used instead of PFNs because userspace naturally
+knows virtual addresses, while PFNs are unstable under migration and often
+hard to obtain.
+
+Signed-off-by: Manish Klach <kv_deadline_scheduler>
+---
+ include/linux/memory_intent.h |  38 +++++++
+ mm/Kconfig                    |  15 +++
+ mm/Makefile                   |   1 +
+ mm/memory_intent.c            | 209 ++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 263 insertions(+)
+ create mode 100644 include/linux/memory_intent.h
+ create mode 100644 mm/memory_intent.c
+
+diff --git a/include/linux/memory_intent.h b/include/linux/memory_intent.h
+new file mode 100644
+index 000000000000..04baf332d6db
+--- /dev/null
++++ b/include/linux/memory_intent.h
+@@ -0,0 +1,38 @@
++#ifndef _LINUX_MEMORY_INTENT_H
++#define _LINUX_MEMORY_INTENT_H
++
++#include <linux/list.h>
++#include <linux/types.h>
++
++#define MM_INTENT_LATENCY_CRITICAL 0x1
++#define MM_INTENT_RECLAIMABLE      0x2
++#define MM_INTENT_PREFETCHABLE     0x4
++#define MM_INTENT_RECOMPUTE_OK     0x8
++#define MM_INTENT_BACKGROUND       0x10
++
++struct memory_intent_entry {
++	struct list_head node;
++	pid_t pid;
++	unsigned long start;
++	unsigned long end;
++	u64 intent_flags;
++	u64 deadline_ns;
++	u32 priority;
++};
++
++#if defined(CONFIG_EXPERIMENTAL_MEMORY_INTENT) || defined(CONFIG_DEBUG_FS)
++int memory_intent_init_debugfs(void);
++void memory_intent_exit_debugfs(void);
++#else
++static inline int memory_intent_init_debugfs(void)
++{
++	return 0;
++}
++
++static inline void memory_intent_exit_debugfs(void)
++{
++}
++#endif
++
++#endif /* _LINUX_MEMORY_INTENT_H */
+diff --git a/mm/Kconfig b/mm/Kconfig
+index 18af73bbcc1e..68d35241a01c 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -1234,6 +1234,21 @@ config ANON_VMA_NAME
+ 	  Allow anonymous memory mappings to be named.  This is useful when
+ 	  debugging userspace allocators and memory pressure behavior.
+ 
++config EXPERIMENTAL_MEMORY_INTENT
++	bool "Experimental memory intent debugfs registry"
++	depends on DEBUG_FS
++	help
++	  Add a debugfs-only, observability-first memory-intent registry for
++	  research. This interface is intended for pinned-kernel experiments
++	  and does not change reclaim behavior.
++
++	  The interface accepts virtual-address ranges together with generic
++	  intent flags such as LATENCY_CRITICAL and RECLAIMABLE.
++
++	  This is RFC v0 infrastructure only. It is not a stable ABI and
++	  should not be treated as production-ready.
++
+ endmenu
+ 
+ menu "Memory Debugging"
+diff --git a/mm/Makefile b/mm/Makefile
+index b92eb5c64548..7c3561dfb19e 100644
+--- a/mm/Makefile
++++ b/mm/Makefile
+@@ -111,6 +111,7 @@ obj-$(CONFIG_PAGE_REPORTING) += page_reporting.o
+ obj-$(CONFIG_MEMORY_FAILURE) += memory-failure.o
+ obj-$(CONFIG_HWPOISON_INJECT) += hwpoison-inject.o
+ obj-$(CONFIG_PER_VMA_LOCK_STATS) += per_vma_lock_stats.o
++obj-$(CONFIG_EXPERIMENTAL_MEMORY_INTENT) += memory_intent.o
+ 
+ KCOV_INSTRUMENT_mm-ksm.o := n
+ KASAN_SANITIZE_khugepaged.o := n
+diff --git a/mm/memory_intent.c b/mm/memory_intent.c
+new file mode 100644
+index 000000000000..1ed03a805fe7
+--- /dev/null
++++ b/mm/memory_intent.c
+@@ -0,0 +1,209 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * RFC v0 experimental memory-intent registry.
++ *
++ * This file is intentionally debugfs-only research infrastructure for a
++ * pinned Linux 6.8.y validation target. It does not change reclaim behavior.
++ */
++
++#include <linux/debugfs.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/list.h>
++#include <linux/memory_intent.h>
++#include <linux/mutex.h>
++#include <linux/overflow.h>
++#include <linux/pid.h>
++#include <linux/sched/task.h>
++#include <linux/seq_file.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++
++#define MM_INTENT_LINE_MAX 128
++
++static LIST_HEAD(memory_intent_entries);
++static DEFINE_MUTEX(memory_intent_lock);
++static struct dentry *memory_intent_dir;
++
++static void memory_intent_clear_all_locked(void)
++{
++	struct memory_intent_entry *entry;
++	struct memory_intent_entry *tmp;
++
++	list_for_each_entry_safe(entry, tmp, &memory_intent_entries, node) {
++		list_del(&entry->node);
++		kfree(entry);
++	}
++}
++
++static ssize_t memory_intent_register_write(struct file *file,
++					   const char __user *buffer,
++					   size_t count, loff_t *ppos)
++{
++	char line[MM_INTENT_LINE_MAX];
++	struct memory_intent_entry *entry;
++	struct pid *pid;
++	struct task_struct *task;
++	pid_t pid_nr;
++	unsigned int priority;
++	unsigned long start;
++	unsigned long length;
++	unsigned long flags;
++	unsigned long end;
++	u64 deadline_ns;
++	int parsed;
++
++	if (!count || count >= sizeof(line))
++		return -EINVAL;
++
++	if (copy_from_user(line, buffer, count))
++		return -EFAULT;
++	line[count] = '\0';
++
++	parsed = sscanf(line, "%d %lx %lx %lx %llu %u",
++			&pid_nr, &start, &length, &flags, &deadline_ns,
++			&priority);
++	if (parsed != 6)
++		return -EINVAL;
++
++	if (!length)
++		return -EINVAL;
++	if (check_add_overflow(start, length, &end))
++		return -EINVAL;
++
++	pid = find_get_pid(pid_nr);
++	if (!pid)
++		return -ESRCH;
++
++	task = get_pid_task(pid, PIDTYPE_PID);
++	put_pid(pid);
++	if (!task)
++		return -ESRCH;
++	put_task_struct(task);
++
++	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
++	if (!entry)
++		return -ENOMEM;
++
++	entry->pid = pid_nr;
++	entry->start = start;
++	entry->end = end;
++	entry->intent_flags = flags;
++	entry->deadline_ns = deadline_ns;
++	entry->priority = priority;
++
++	mutex_lock(&memory_intent_lock);
++	list_add_tail(&entry->node, &memory_intent_entries);
++	mutex_unlock(&memory_intent_lock);
++
++	return count;
++}
++
++static int memory_intent_dump_show(struct seq_file *m, void *v)
++{
++	struct memory_intent_entry *entry;
++
++	mutex_lock(&memory_intent_lock);
++	list_for_each_entry(entry, &memory_intent_entries, node) {
++		seq_printf(m, "%d 0x%lx 0x%lx 0x%llx %llu %u\n",
++			   entry->pid,
++			   entry->start,
++			   entry->end,
++			   entry->intent_flags,
++			   entry->deadline_ns,
++			   entry->priority);
++	}
++	mutex_unlock(&memory_intent_lock);
++
++	return 0;
++}
++
++static int memory_intent_dump_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, memory_intent_dump_show, inode->i_private);
++}
++
++static ssize_t memory_intent_clear_write(struct file *file,
++					const char __user *buffer,
++					size_t count, loff_t *ppos)
++{
++	mutex_lock(&memory_intent_lock);
++	memory_intent_clear_all_locked();
++	mutex_unlock(&memory_intent_lock);
++	return count;
++}
++
++static const struct file_operations memory_intent_register_fops = {
++	.write = memory_intent_register_write,
++	.llseek = no_llseek,
++};
++
++static const struct file_operations memory_intent_dump_fops = {
++	.open = memory_intent_dump_open,
++	.read = seq_read,
++	.llseek = seq_lseek,
++	.release = single_release,
++};
++
++static const struct file_operations memory_intent_clear_fops = {
++	.write = memory_intent_clear_write,
++	.llseek = no_llseek,
++};
++
++int memory_intent_init_debugfs(void)
++{
++	if (memory_intent_dir)
++		return 0;
++
++	memory_intent_dir = debugfs_create_dir("mm_intent", NULL);
++	if (IS_ERR_OR_NULL(memory_intent_dir))
++		return -ENOMEM;
++
++	if (!debugfs_create_file("register", 0200, memory_intent_dir, NULL,
++				 &memory_intent_register_fops))
++		goto err;
++
++	if (!debugfs_create_file("dump", 0400, memory_intent_dir, NULL,
++				 &memory_intent_dump_fops))
++		goto err;
++
++	if (!debugfs_create_file("clear", 0200, memory_intent_dir, NULL,
++				 &memory_intent_clear_fops))
++		goto err;
++
++	pr_info("memory_intent: debugfs registry initialized\n");
++	return 0;
++err:
++	debugfs_remove_recursive(memory_intent_dir);
++	memory_intent_dir = NULL;
++	return -ENOMEM;
++}
++
++void memory_intent_exit_debugfs(void)
++{
++	mutex_lock(&memory_intent_lock);
++	memory_intent_clear_all_locked();
++	mutex_unlock(&memory_intent_lock);
++
++	debugfs_remove_recursive(memory_intent_dir);
++	memory_intent_dir = NULL;
++}
++
++static int __init memory_intent_init(void)
++{
++	return memory_intent_init_debugfs();
++}
++
++fs_initcall(memory_intent_init);
+-- 
+2.47.0
