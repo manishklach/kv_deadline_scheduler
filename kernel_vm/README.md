@@ -90,6 +90,18 @@ These experiments are approximations. `madvise` is advisory. DAMON availability 
 - MGLRU reclaim observation under synthetic KV-like pressure.
 - zswap or swap observation for cold KV-like regions.
 
+## Experiment Tracks
+
+| Track | Path | Kernel interface | Runnable on WSL? |
+|---|---|---|---|
+| DAMON hotness | `experiments/damon_kv_hotness/` | DAMON sysfs | Yes, with `sudo` |
+| userfaultfd migration | `experiments/userfaultfd_kv/` | `userfaultfd` | Yes |
+| io_uring prefetch | `../experiments/io_uring_kv/` | raw `io_uring` syscalls | Yes |
+| THP allocation | `experiments/thp_kv/` | `madvise(MADV_HUGEPAGE)` | Yes |
+| perf counters | `../experiments/perf_kv/` | `perf_event_open` | Yes, when `paranoid <= 2` |
+| madvise cold | `experiments/linux_vm_intent/` | `MADV_COLD` | Yes |
+| ioprio bench | `../experiments/linux_io_priority/` | `ioprio_set` | Yes |
+
 ## Contents
 
 - [docs/vm_vs_io_kernel_tracks.md](docs/vm_vs_io_kernel_tracks.md)
@@ -99,3 +111,8 @@ These experiments are approximations. `madvise` is advisory. DAMON availability 
 - [docs/zswap_swap_track.md](docs/zswap_swap_track.md)
 - [experiments/linux_vm_intent/README.md](experiments/linux_vm_intent/README.md)
 - [experiments/damon_kv_hotness/README.md](experiments/damon_kv_hotness/README.md)
+- [experiments/userfaultfd_kv/README.md](experiments/userfaultfd_kv/README.md)
+- [experiments/thp_kv/README.md](experiments/thp_kv/README.md)
+- [../experiments/io_uring_kv/README.md](../experiments/io_uring_kv/README.md)
+- [../experiments/perf_kv/README.md](../experiments/perf_kv/README.md)
+- [run_all_experiments.sh](run_all_experiments.sh)

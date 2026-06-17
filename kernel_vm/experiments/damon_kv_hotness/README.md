@@ -1,34 +1,49 @@
-# DAMON KV Hotness Workload
+# DAMON KV Hotness
 
-This directory contains a simple KV-like region workload for DAMON experiments.
+DAMON gives Linux-native access sampling for virtual-address ranges. That matters here because KV Deadline Scheduler wants a real hotness signal for KV-like memory without requiring GPU instrumentation or a patched serving runtime.
 
-It does not configure DAMON automatically. Instead, it creates a process with hot, warm, and cold memory-access patterns so you can attach DAMON externally if your kernel exposes the necessary interfaces.
+This track treats large anonymous mappings as stand-ins for KV blocks, lets DAMON monitor them through sysfs, and then converts the sampled counts into `MemoryIntentEvent` records for offline replay.
+
+## Why This Matters
+
+- HOT regions approximate decode-critical KV blocks.
+- WARM regions approximate near-future reuse.
+- COLD regions approximate spill candidates.
+- DAMON supplies kernel-observed access counts instead of heuristic guesses from the simulator alone.
 
 ## Files
 
+- `kv_damon_controller.py`
+  Allocates KV-like regions, configures DAMON through sysfs, runs the access loop, and writes `results/damon_hotness_result.json`.
+- `kv_damon_to_intent.py`
+  Converts DAMON access counts into `MemoryIntentEvent` JSONL for `kvmi compare --trace`.
 - `kv_region_workload.py`
-  Creates hot, warm, and cold regions and touches them at different rates.
+  Older lightweight workload generator kept for manual experiments.
 - `run_damon_monitor.sh`
-  Best-effort helper script that checks for common DAMON control paths and prints guidance.
+  Best-effort helper script for manual monitoring.
 
-## Example
+## How To Run
 
 ```bash
-python kv_region_workload.py --duration-sec 120
-sudo ./run_damon_monitor.sh <PID> 60
+cd kernel_vm/experiments/damon_kv_hotness
+sudo python3 kv_damon_controller.py
+python3 kv_damon_to_intent.py
 ```
 
-## What to Expect
+## What To Expect
 
-- The workload prints its PID and region sizes.
-- The hot region should show the highest activity.
-- The warm region should show periodic activity.
-- The cold region should show much less activity.
+- Regions `0-1` should show the highest `nr_accesses`.
+- Regions `2-3` should land in a warm middle band.
+- Regions `4-7` should remain near zero after the initial write.
+- The converter should emit a JSONL trace with `DECODE_CRITICAL`, `HOT`, `WARM`, and `COLD` classifications.
+
+## Output
+
+- `results/damon_hotness_result.json`
+- `results/damon_hotness_trace.jsonl`
 
 ## Caveats
 
-- DAMON must be enabled in the kernel.
-- DAMON availability depends on kernel config and distro support.
-- The control interface varies by kernel.
-- This is access-pattern observability, not policy enforcement.
-- DAMON does not know KV semantics unless paired with intent metadata.
+- Run the controller with `sudo`; it programs DAMON sysfs directly.
+- DAMON sysfs layout can vary across kernels.
+- The result is still a research proxy for KV hotness, not production GPU memory telemetry.
