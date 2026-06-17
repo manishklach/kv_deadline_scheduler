@@ -55,6 +55,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--block-kb", type=int, default=128)
     parser.add_argument("--duration-sec", type=float, default=10.0)
     parser.add_argument(
+        "--iterations",
+        type=int,
+        default=1,
+        help="Number of times to repeat the benchmark and average results (default: 1)",
+    )
+    parser.add_argument(
         "--mode",
         choices=["baseline", "separated", "io_uring_sketch"],
         default="baseline",
@@ -296,6 +302,38 @@ def print_summary(result: dict[str, Any]) -> None:
         print(f"Warning: {warning}")
 
 
+def average_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+    if not results:
+        raise ValueError("results must not be empty")
+    if len(results) == 1:
+        averaged = dict(results[0])
+        averaged["iterations"] = 1
+        return averaged
+
+    averaged = {
+        "mode": results[0]["mode"],
+        "iterations": len(results),
+        "duration_sec": sum(result["duration_sec"] for result in results) / len(results),
+        "critical_read_count": sum(result["critical_read_count"] for result in results) / len(results),
+        "background_write_mbps": sum(result["background_write_mbps"] for result in results) / len(results),
+        "critical_read_latency_ms": {
+            "p50": sum(result["critical_read_latency_ms"]["p50"] for result in results) / len(results),
+            "p95": sum(result["critical_read_latency_ms"]["p95"] for result in results) / len(results),
+            "p99": sum(result["critical_read_latency_ms"]["p99"] for result in results) / len(results),
+            "max": sum(result["critical_read_latency_ms"]["max"] for result in results) / len(results),
+        },
+        "ioprio_active": any(result["ioprio_active"] for result in results),
+        "priority_warnings": sorted(
+            {
+                warning
+                for result in results
+                for warning in result.get("priority_warnings", [])
+            }
+        ),
+    }
+    return averaged
+
+
 def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     base_dir = Path(args.dir)
     critical_path = base_dir / "critical_reads.dat"
@@ -368,12 +406,23 @@ def main() -> int:
         raise SystemExit(0)
     if args.block_kb <= 0:
         raise SystemExit("--block-kb must be positive")
+    if args.iterations <= 0:
+        raise SystemExit("--iterations must be positive")
     if args.critical_mb <= 0 or args.background_mb <= 0:
         raise SystemExit("file sizes must be positive")
     if args.duration_sec <= 0:
         raise SystemExit("--duration-sec must be positive")
 
-    result = run_benchmark(args)
+    if args.iterations == 1:
+        result = run_benchmark(args)
+    else:
+        iteration_results: list[dict[str, Any]] = []
+        for iteration in range(1, args.iterations + 1):
+            result_i = run_benchmark(args)
+            iteration_results.append(result_i)
+            print(f"Run {iteration}/{args.iterations} complete")
+        result = average_results(iteration_results)
+
     print_summary(result)
 
     if args.json_out:
