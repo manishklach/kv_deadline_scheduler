@@ -1,5 +1,10 @@
 # KV Deadline Scheduler
 
+[![CI](https://github.com/manishklach/kv_deadline_scheduler/actions/workflows/ci.yml/badge.svg)](https://github.com/manishklach/kv_deadline_scheduler/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/manishklach/kv_deadline_scheduler)](https://github.com/manishklach/kv_deadline_scheduler/releases)
+[![License](https://img.shields.io/github/license/manishklach/kv_deadline_scheduler)](https://github.com/manishklach/kv_deadline_scheduler/blob/main/LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
+
 Deadline-aware KV-cache scheduling for long-context LLM inference memory pressure.
 
 > KV cache is not anonymous memory. It is request-state with deadlines.
