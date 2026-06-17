@@ -141,6 +141,10 @@ The VM path is closest to MEXT-like memory expansion: decide which KV-like pages
 
 The I/O path begins after KV has become storage traffic and explores whether decode-critical prefetch reads should be prioritized over background spill writes.
 
+The repository also includes kernel-facing patch designs under:
+
+- [`kernel_patches/`](kernel_patches/)
+
 See:
 
 - [`kernel_vm/`](kernel_vm/)

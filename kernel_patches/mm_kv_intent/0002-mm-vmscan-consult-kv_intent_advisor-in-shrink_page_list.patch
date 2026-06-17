@@ -1,0 +1,76 @@
+From 8e0a1c57f11d7fa53f6edc2015bc35d54d7f7ad0 Mon Sep 17 00:00:00 2001
+From: Manish Klach <kv_deadline_scheduler>
+Date: Wed, 17 Jun 2026 12:01:00 -0700
+Subject: [PATCH 2/3] mm: vmscan: consult kv_intent_advisor in
+ shrink_page_list
+
+Consult kv_intent_advisor before reclaiming pages in shrink_page_list().
+
+Pinned KV pages should be preserved. Decode-critical KV pages should also
+be kept resident when reclaim is already constrained and swap is not
+available for the current scan context.
+
+The patch also adds VM event counters so future evaluation can quantify
+how often KV-aware hints preserved residency versus allowing reclaim.
+
+Signed-off-by: Manish Klach <kv_deadline_scheduler>
+---
+ include/linux/vm_event_item.h |  2 ++
+ mm/vmscan.c                   | 13 +++++++++++++
+ 2 files changed, 15 insertions(+)
+
+diff --git a/include/linux/vm_event_item.h b/include/linux/vm_event_item.h
+index 17c0d6c4c845..0d7067a9d7cb 100644
+--- a/include/linux/vm_event_item.h
++++ b/include/linux/vm_event_item.h
+@@ -149,6 +149,8 @@ enum vm_event_item { PGPGIN, PGPGOUT, PSWPIN, PSWPOUT,
+ 	PGSCAN_SKIP,
+ 	PGSTEAL_KSWAPD,
+ 	PGSTEAL_DIRECT,
++	KV_INTENT_KEEP,
++	KV_INTENT_RECLAIM,
+ 	KSWAPD_INODESTEAL,
+ 	SLABS_SCANNED,
+ 	KSWAPD_LOW_WMARK_HIT_QUICKLY,
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 94d0f5c1dc80..6fd739c14d2d 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -29,6 +29,7 @@
+ #include <linux/memcontrol.h>
+ #include <linux/mm_inline.h>
+ #include <linux/mmu_notifier.h>
++#include <linux/kv_intent.h>
+ #include <linux/page_idle.h>
+ #include <linux/page_owner.h>
+ #include <linux/pagevec.h>
+@@ -1508,6 +1509,7 @@ static unsigned int shrink_page_list(struct list_head *page_list,
+ 	LIST_HEAD(ret_pages);
+ 	LIST_HEAD(free_pages);
+ 	unsigned int nr_reclaimed = 0;
++	int prio;
+ 
+ 	cond_resched();
+ 
+@@ -1578,6 +1580,17 @@ static unsigned int shrink_page_list(struct list_head *page_list,
+ 		if (!sc->may_unmap && page_mapped(page))
+ 			goto keep_locked;
+ 
++		if (kv_intent_is_pinned(page_to_pfn(page))) {
++			count_vm_event(KV_INTENT_KEEP);
++			goto keep_locked;
++		}
++
++		prio = kv_intent_get_priority(page_to_pfn(page));
++		if (prio == KV_PRIORITY_DECODE_CRITICAL && !sc->may_swap) {
++			count_vm_event(KV_INTENT_KEEP);
++			goto keep_locked;
++		}
++		count_vm_event(KV_INTENT_RECLAIM);
++
+ 		if (PageWriteback(page)) {
+ 			/*
+ 			 * Page is dirty and under writeback but we can still try
+-- 
+2.47.0
+

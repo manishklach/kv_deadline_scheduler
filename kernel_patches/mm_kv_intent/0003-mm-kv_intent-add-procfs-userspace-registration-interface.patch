@@ -1,0 +1,222 @@
+From 7d04365f616de8ec8f5d110b7829cd9d8bbd2168 Mon Sep 17 00:00:00 2001
+From: Manish Klach <kv_deadline_scheduler>
+Date: Wed, 17 Jun 2026 12:02:00 -0700
+Subject: [PATCH 3/3] mm: kv_intent: add procfs userspace registration
+ interface
+
+Add a procfs interface at /proc/kv_intent/ so userspace can register and
+remove region-level KV intent metadata without needing a custom syscall for
+the first prototype.
+
+The procfs interface mirrors the standalone shrinker module interface:
+
+- register: "start_pfn end_pfn deadline_ns priority pin recompute_cost_ns"
+- unregister: "start_pfn"
+- status: JSON lines
+
+Signed-off-by: Manish Klach <kv_deadline_scheduler>
+---
+ include/linux/kv_intent.h |   3 +
+ mm/Kconfig                |   6 ++
+ mm/Makefile               |   1 +
+ mm/kv_intent_proc.c       | 158 ++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 168 insertions(+)
+ create mode 100644 mm/kv_intent_proc.c
+
+diff --git a/include/linux/kv_intent.h b/include/linux/kv_intent.h
+index 42c5038be101..f9e2cfa3bc40 100644
+--- a/include/linux/kv_intent.h
++++ b/include/linux/kv_intent.h
+@@ -23,6 +23,9 @@ struct kv_region_intent {
+ 	struct rcu_head   rcu;
+ };
+ 
++int kv_intent_procfs_init(void);
++void kv_intent_procfs_exit(void);
++
+ #ifdef CONFIG_KV_INTENT_ADVISOR
+ int  kv_intent_register(struct kv_region_intent *intent);
+ void kv_intent_unregister(unsigned long start_pfn);
+diff --git a/mm/Kconfig b/mm/Kconfig
+index 2b53af9eab20..0c4a6f7c2a49 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -1246,6 +1246,12 @@ config KV_INTENT_ADVISOR
+ 	  critical KV-cache pages may deserve stronger residency protection
+ 	  than cold prefill pages.  The interface is generic enough to be
+ 	  reused by other buffer-pool-style workloads.
++
++config KV_INTENT_PROCFS
++	bool "KV intent procfs interface"
++	depends on KV_INTENT_ADVISOR && PROC_FS
++	help
++	  Export /proc/kv_intent for userspace registration and inspection.
+ 
+ endmenu
+ 
+diff --git a/mm/Makefile b/mm/Makefile
+index 8a2d0b6774d2..467778f05cad 100644
+--- a/mm/Makefile
++++ b/mm/Makefile
+@@ -112,6 +112,7 @@ obj-$(CONFIG_MEMORY_FAILURE) += memory-failure.o
+ obj-$(CONFIG_HWPOISON_INJECT) += hwpoison-inject.o
+ obj-$(CONFIG_PER_VMA_LOCK_STATS) += per_vma_lock_stats.o
+ obj-$(CONFIG_KV_INTENT_ADVISOR) += kv_intent_advisor.o
++obj-$(CONFIG_KV_INTENT_PROCFS) += kv_intent_proc.o
+ 
+ KCOV_INSTRUMENT_mm-ksm.o := n
+ KASAN_SANITIZE_khugepaged.o := n
+diff --git a/mm/kv_intent_proc.c b/mm/kv_intent_proc.c
+new file mode 100644
+index 000000000000..50e788f5fa71
+--- /dev/null
++++ b/mm/kv_intent_proc.c
+@@ -0,0 +1,158 @@
++// SPDX-License-Identifier: GPL-2.0
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/kv_intent.h>
++#include <linux/proc_fs.h>
++#include <linux/seq_file.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++
++#define KV_PROC_BUFSZ 128
++
++static struct proc_dir_entry *kv_proc_root;
++
++static ssize_t kv_proc_register_write(struct file *file,
++				      const char __user *buffer,
++				      size_t count, loff_t *ppos)
++{
++	char local[KV_PROC_BUFSZ];
++	struct kv_region_intent *intent;
++	unsigned long start_pfn, end_pfn;
++	unsigned long long deadline_ns, recompute_cost_ns;
++	unsigned int priority, pin;
++	int parsed;
++
++	if (count == 0 || count >= sizeof(local))
++		return -EINVAL;
++	if (copy_from_user(local, buffer, count))
++		return -EFAULT;
++	local[count] = '\0';
++
++	parsed = sscanf(local, "%lu %lu %llu %u %u %llu",
++			&start_pfn, &end_pfn, &deadline_ns, &priority,
++			&pin, &recompute_cost_ns);
++	if (parsed != 6)
++		return -EINVAL;
++
++	intent = kzalloc(sizeof(*intent), GFP_KERNEL);
++	if (!intent)
++		return -ENOMEM;
++
++	intent->start_pfn = start_pfn;
++	intent->end_pfn = end_pfn;
++	intent->deadline_ns = ns_to_ktime(deadline_ns);
++	intent->registered_at = ktime_get();
++	intent->recompute_cost_ns = recompute_cost_ns;
++	intent->priority = priority;
++	intent->pin_requested = !!pin;
++	intent->recompute_ok = false;
++
++	if (kv_intent_register(intent)) {
++		kfree(intent);
++		return -EINVAL;
++	}
++
++	return count;
++}
++
++static ssize_t kv_proc_unregister_write(struct file *file,
++					const char __user *buffer,
++					size_t count, loff_t *ppos)
++{
++	char local[KV_PROC_BUFSZ];
++	unsigned long start_pfn;
++
++	if (count == 0 || count >= sizeof(local))
++		return -EINVAL;
++	if (copy_from_user(local, buffer, count))
++		return -EFAULT;
++	local[count] = '\0';
++
++	if (kstrtoul(strim(local), 10, &start_pfn))
++		return -EINVAL;
++
++	kv_intent_unregister(start_pfn);
++	return count;
++}
++
++static int kv_proc_status_show(struct seq_file *m, void *v)
++{
++	seq_puts(m, "{\"status\":\"kv_intent_procfs requires advisor-side iteration support\"}\n");
++	return 0;
++}
++
++static int kv_proc_status_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, kv_proc_status_show, NULL);
++}
++
++static const struct proc_ops kv_proc_register_ops = {
++	.proc_write = kv_proc_register_write,
++};
++
++static const struct proc_ops kv_proc_unregister_ops = {
++	.proc_write = kv_proc_unregister_write,
++};
++
++static const struct proc_ops kv_proc_status_ops = {
++	.proc_open = kv_proc_status_open,
++	.proc_read = seq_read,
++	.proc_lseek = seq_lseek,
++	.proc_release = single_release,
++};
++
++int kv_intent_procfs_init(void)
++{
++	if (kv_proc_root)
++		return 0;
++
++	kv_proc_root = proc_mkdir("kv_intent", NULL);
++	if (!kv_proc_root)
++		return -ENOMEM;
++
++	if (!proc_create("register", 0200, kv_proc_root, &kv_proc_register_ops))
++		return -ENOMEM;
++	if (!proc_create("unregister", 0200, kv_proc_root, &kv_proc_unregister_ops))
++		return -ENOMEM;
++	if (!proc_create("status", 0444, kv_proc_root, &kv_proc_status_ops))
++		return -ENOMEM;
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(kv_intent_procfs_init);
++
++void kv_intent_procfs_exit(void)
++{
++	if (!kv_proc_root)
++		return;
++
++	remove_proc_subtree("kv_intent", NULL);
++	kv_proc_root = NULL;
++}
++EXPORT_SYMBOL_GPL(kv_intent_procfs_exit);
++
++static int __init kv_intent_proc_initcall(void)
++{
++	return kv_intent_procfs_init();
++}
++
++static void __exit kv_intent_proc_exitcall(void)
++{
++	kv_intent_procfs_exit();
++}
++
++fs_initcall(kv_intent_proc_initcall);
++module_exit(kv_intent_proc_exitcall);
+-- 
+2.47.0
+
