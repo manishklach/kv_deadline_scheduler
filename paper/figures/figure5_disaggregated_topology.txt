@@ -1,0 +1,4 @@
+Figure 5. Disaggregated topology
+
+[Prefill Node] --50us-- [Decode Node] --200us-- [Storage Node]
+      \--------------------------------200us-----------------/

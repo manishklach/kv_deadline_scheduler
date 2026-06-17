@@ -24,12 +24,15 @@ from .policies import (
 from .schema import EventType, MemoryIntent, ObjectType, Phase, Priority, Tier
 from .request_trace import RequestTraceRecord, load_request_trace, write_request_trace
 from .simulator import KVMemorySimulator, SimulationResult, WorkloadProfile, generate_synthetic_kv_workload
+from .speculative import DraftNode, DraftTree, SpeculativeIntentPolicy, generate_speculative_workload
 from .trace import IntentTraceRecorder
 from .trace_importer import request_trace_to_intent_events
 
 __all__ = [
     "DeadlineAwarePolicy",
     "EventType",
+    "DraftNode",
+    "DraftTree",
     "HotColdPolicy",
     "IntentAwarePolicy",
     "IntentTraceRecorder",
@@ -46,6 +49,7 @@ __all__ = [
     "PredictiveHotnessPolicy",
     "RequestTraceRecord",
     "SimulationResult",
+    "SpeculativeIntentPolicy",
     "Tier",
     "VLLMIntentAdapter",
     "WorkloadProfile",
@@ -55,6 +59,7 @@ __all__ = [
     "format_bytes",
     "generate_synthetic_kv_workload",
     "generate_mock_vllm_trace",
+    "generate_speculative_workload",
     "kv_bytes_per_token",
     "load_openai_proxy_logs",
     "load_prometheus_samples",

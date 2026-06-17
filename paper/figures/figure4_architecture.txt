@@ -1,0 +1,12 @@
+Figure 4. System architecture
+
+runtime / traces
+      |
+      v
+Memory Intent ABI
+      |
+      +--> Python simulator
+      |
+      +--> kernel experiments
+      |
+      +--> RFC kernel path

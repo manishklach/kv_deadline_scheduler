@@ -1,0 +1,6 @@
+Figure 3. Memory tier bandwidth cliff
+
+HBM   ----------------------------- fastest, lowest capacity
+DRAM  -------------------- slower, larger
+CXL   ------------ slower again, expandable
+NVMe  ---- much slower, very large

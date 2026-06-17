@@ -1,0 +1,7 @@
+Figure 2. Policy comparison (dc_miss_rate)
+
+LRU              |############ 12.4%
+HotCold          |############ 12.4%
+PredictiveHotness|####         lower
+IntentAware      |             0%
+DeadlineAware    |             0%

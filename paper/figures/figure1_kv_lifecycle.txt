@@ -1,0 +1,5 @@
+Figure 1. KV block lifecycle state machine
+
+ALLOCATED -> PREFILL -> DECODE_CRITICAL -> SPILLABLE -> FREED
+                 \-> DRAFT -> VERIFY -> ACCEPTED -> DECODE_CRITICAL
+                                  \-> REJECTED -> FREED

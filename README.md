@@ -7,6 +7,8 @@
 
 Deadline-aware KV-cache scheduling for long-context LLM inference memory pressure.
 
+LRU evicts 12.4% of decode-critical blocks under pressure. DeadlineAware evicts 0%.
+
 > KV cache is not anonymous memory. It is request-state with deadlines.
 
 Generic memory tiering asks: "Is this page hot?"
@@ -28,6 +30,18 @@ KV Deadline Scheduler is a systems research prototype for deadline-aware KV-cach
 It defines a runtime-declared KV intent schema, estimates KV pressure from model configuration and request traces, compares access-based and deadline-aware policies under simulated HBM pressure, and explores a no-kernel-patch bridge from KV intent to Linux I/O priority classes.
 
 The goal is to test whether deadline-aware scheduling can protect the right request-state under memory pressure better than generic LRU-style heuristics, and to explore how that intent could eventually influence storage I/O behavior.
+
+## Tracks
+
+| Track | Path | Focus |
+|---|---|---|
+| Formal ABI | `abi/` | Versioned Memory Intent ABI and low-latency ring buffer |
+| Disaggregated KV | `disaggregated/` | Multi-node KV scheduling under network RTT |
+| Speculative Scheduling | `src/kv_memory_intent/speculative/` | Draft-tree aware KV reclamation |
+| QEMU Validation | `qemu_validation/` | Reproducible kernel boot and patch testing harness |
+| Paper Draft | `paper/` | OSDI or SOSP-style research writeup |
+| vLLM Integration | `integrations/vllm/` | Enterprise-facing integration design |
+| Website | `docs/website/` | GitHub Pages-ready landing page |
 
 ## No vLLM Patch Required
 
@@ -107,6 +121,11 @@ More background:
 - Simulated p50, p95, and p99 metrics
 - Linux-first userspace I/O priority emulation benchmark
 - Docs for external trace import, optional runtime instrumentation, reproducibility, and results capture
+- Versioned C ABI for runtime-to-OS memory intent propagation
+- Disaggregated KV scheduling model for multi-node topologies
+- Speculative decoding-aware scheduling extensions
+- QEMU-based kernel validation harness scaffolding
+- Draft paper and website artifacts
 
 ## WSL Validation Snapshot
 
@@ -172,6 +191,13 @@ Linux I/O priority emulation:
 ```bash
 python experiments/linux_io_priority/kv_io_priority_bench.py --mode baseline --duration-sec 10 --dir /tmp/kvio
 python experiments/linux_io_priority/kv_io_priority_bench.py --mode separated --duration-sec 10 --dir /tmp/kvio
+```
+
+ABI compile test:
+
+```bash
+cd abi
+make
 ```
 
 For reproducible runs and result capture:
@@ -274,6 +300,22 @@ See:
 
 - [docs/roadmap.md](docs/roadmap.md)
 - [docs/blog_draft.md](docs/blog_draft.md)
+
+## Citing This Work
+
+```bibtex
+@misc{kv_deadline_scheduler2026,
+  title        = {KV Deadline Scheduler: Intent-Aware Memory Management for Long-Context LLM Inference},
+  author       = {Manish Klach},
+  year         = {2026},
+  howpublished = {\url{https://github.com/manishklach/kv_deadline_scheduler}},
+  note         = {Research prototype}
+}
+```
+
+## For Enterprises / Collaboration
+
+If you are building LLM inference infrastructure and want to integrate deadline-aware KV scheduling, open an issue or email.
 
 ## Repository Layout
 
