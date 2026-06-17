@@ -20,16 +20,17 @@ Milestone:
 ## Build Steps
 
 1. Clone a Linux `6.8.y` tree
-2. Apply the patch:
+2. Apply all four patches in order:
 
 ```bash
-git am 0001-mm-experimental-memory-intent-debugfs-registry.patch
+git am ../kernel_patches/mm_intent_rfc/patches/*.patch
 ```
 
 3. Enable `CONFIG_DEBUG_FS`
-4. Enable `CONFIG_EXPERIMENTAL_MEMORY_INTENT` if the patch adds it
-5. Build the kernel
-6. Boot under QEMU or on a dedicated test machine
+4. Enable `CONFIG_EXPERIMENTAL_MEMORY_INTENT` and `CONFIG_EXPERIMENTAL_MEMORY_INTENT_PROC` if the patches add them
+5. (Optional) Enable `CONFIG_EXPERIMENTAL_MEMORY_INTENT_RECLAIM` for reclaim experiments -- default-off by design
+6. Build the kernel
+7. Boot under QEMU or on a dedicated test machine
 
 If developing on WSL, use WSL for patch authoring and QEMU or native Linux for runtime validation.
 

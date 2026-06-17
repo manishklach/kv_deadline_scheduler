@@ -6,63 +6,88 @@ Subject: [PATCH 2/4] mm: proc: expose memory intent observability
 Expose registered memory-intent regions through a proc-oriented
 observability path.
 
+This patch wires the procfs interface to the core interval-tree registry
+provided by patch 0001.  The following files are created under
+/proc/memory_intent/:
+
+  status     - dump all registered intent regions via memory_intent_dump_seq()
+  register   - allocate and register a new intent region (write-only)
+  unregister - unregister an existing region by pid+start_vaddr (write-only)
+
+The input format for register matches the debugfs interface:
+
+  <pid> <start_vaddr_hex> <length_hex> <intent_flags_hex> <deadline_ns> <priority>
+
 This patch intentionally focuses on observability and keeps policy out of
-scope. A future design may choose `debugfs`, `smaps`, or another interface,
-but the goal here is to make intent visible for measurement before reclaim
+scope.  A future design may choose smaps or another interface, but the
+goal here is to make intent visible for measurement before reclaim
 behavior changes are introduced.
 
 Signed-off-by: Manish Klach <kv_deadline_scheduler>
 ---
- mm/Kconfig          |  6 ++++++
- mm/Makefile         |  1 +
- mm/memory_intent_fs.c | 74 +++++++++++++++++++++++++++++++++++++++++++++++++++
- 3 files changed, 81 insertions(+)
+ mm/Kconfig            |  6 +++
+ mm/Makefile           |  1 +
+ mm/memory_intent_fs.c | 96 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 103 insertions(+)
  create mode 100644 mm/memory_intent_fs.c
 
 diff --git a/mm/Kconfig b/mm/Kconfig
-index e89c1ce9ef63..15c00c842ce0 100644
+index 2d8abb831..15c00c842c 100644
 --- a/mm/Kconfig
 +++ b/mm/Kconfig
-@@ -1247,6 +1247,12 @@ config EXPERIMENTAL_MEMORY_INTENT
- 	  Example users include long-context LLM runtimes, database buffer
- 	  pools, and other userspace allocators that understand their own
- 	  latency and recompute costs better than the kernel does.
-+
+@@ -1268,6 +1268,12 @@ config EXPERIMENTAL_MEMORY_INTENT
+ 	  This is RFC v0 infrastructure only. It is not a stable ABI and
+ 	  should not be treated as production-ready.
+ 
 +config EXPERIMENTAL_MEMORY_INTENT_PROC
 +	bool "Experimental memory intent proc observability"
 +	depends on EXPERIMENTAL_MEMORY_INTENT && PROC_FS
 +	help
 +	  Expose registered memory-intent regions through proc for research.
++
+ source "mm/damon/Kconfig"
+ 
+ endmenu
 diff --git a/mm/Makefile b/mm/Makefile
-index 8c24c9dc7603..dc2ef4d901a7 100644
+index 3de86e636..dc2ef4d901 100644
 --- a/mm/Makefile
 +++ b/mm/Makefile
-@@ -112,6 +112,7 @@ obj-$(CONFIG_MEMORY_FAILURE) += memory-failure.o
- obj-$(CONFIG_HWPOISON_INJECT) += hwpoison-inject.o
- obj-$(CONFIG_PER_VMA_LOCK_STATS) += per_vma_lock_stats.o
+@@ -118,6 +118,7 @@ obj-$(CONFIG_SECRETMEM) += secretmem.o
+ obj-$(CONFIG_CMA_SYSFS) += cma_sysfs.o
+ obj-$(CONFIG_USERFAULTFD) += userfaultfd.o
  obj-$(CONFIG_EXPERIMENTAL_MEMORY_INTENT) += memory_intent.o
 +obj-$(CONFIG_EXPERIMENTAL_MEMORY_INTENT_PROC) += memory_intent_fs.o
- 
- KCOV_INSTRUMENT_mm-ksm.o := n
- KASAN_SANITIZE_khugepaged.o := n
+ obj-$(CONFIG_IDLE_PAGE_TRACKING) += page_idle.o
+ obj-$(CONFIG_DEBUG_PAGEALLOC) += debug_page_alloc.o
+ obj-$(CONFIG_DEBUG_PAGE_REF) += debug_page_ref.o
 diff --git a/mm/memory_intent_fs.c b/mm/memory_intent_fs.c
 new file mode 100644
-index 000000000000..cf23ffaf531e
+index 000000000..f7e6d2a4b
 --- /dev/null
 +++ b/mm/memory_intent_fs.c
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,96 @@
 +// SPDX-License-Identifier: GPL-2.0
++/*
++ * Proc-oriented observability for the experimental memory-intent registry.
++ *
++ * Writes to /proc/memory_intent/register and /proc/memory_intent/unregister
++ * are forwarded to the core interval-tree API from memory_intent.c.
++ */
++
 +#include <linux/init.h>
 +#include <linux/kernel.h>
 +#include <linux/memory_intent.h>
++#include <linux/overflow.h>
 +#include <linux/proc_fs.h>
 +#include <linux/seq_file.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++
++#define MM_INTENT_PROC_LINE_MAX 128
 +
 +static int memory_intent_status_show(struct seq_file *m, void *v)
 +{
-+	seq_puts(m,
-+		 "{\"note\":\"observability skeleton; hook iteration into registry before claiming runtime support\"}\n");
-+	return 0;
++	return memory_intent_dump_seq(m);
 +}
 +
 +static int memory_intent_status_open(struct inode *inode, struct file *file)
@@ -71,17 +96,64 @@ index 000000000000..cf23ffaf531e
 +}
 +
 +static ssize_t memory_intent_register_write(struct file *file,
-+					   const char __user *buffer,
-+					   size_t count, loff_t *ppos)
++					    const char __user *buffer,
++					    size_t count, loff_t *ppos)
 +{
-+	return -EOPNOTSUPP;
++	char line[MM_INTENT_PROC_LINE_MAX];
++	struct memory_intent_region *region;
++	pid_t pid_nr;
++	unsigned int priority;
++	unsigned long start, length, flags, end;
++	u64 deadline_ns;
++	int parsed;
++
++	if (!count || count >= sizeof(line))
++		return -EINVAL;
++	if (copy_from_user(line, buffer, count))
++		return -EFAULT;
++	line[count] = '\0';
++
++	parsed = sscanf(line, "%d %lx %lx %lx %llu %u",
++			&pid_nr, &start, &length, &flags,
++			&deadline_ns, &priority);
++	if (parsed != 6)
++		return -EINVAL;
++	if (!length || check_add_overflow(start, length, &end))
++		return -EINVAL;
++
++	region = kzalloc(sizeof(*region), GFP_KERNEL);
++	if (!region)
++		return -ENOMEM;
++
++	region->node.start = start;
++	region->node.last = end - 1;
++	region->pid = pid_nr;
++	region->intent_flags = flags;
++	region->deadline_ns = deadline_ns;
++	region->priority = priority;
++
++	return memory_intent_register(region) ? -ENOMEM : count;
 +}
 +
 +static ssize_t memory_intent_unregister_write(struct file *file,
-+					     const char __user *buffer,
-+					     size_t count, loff_t *ppos)
++					      const char __user *buffer,
++					      size_t count, loff_t *ppos)
 +{
-+	return -EOPNOTSUPP;
++	char line[MM_INTENT_PROC_LINE_MAX];
++	pid_t pid_nr;
++	unsigned long start;
++
++	if (!count || count >= sizeof(line))
++		return -EINVAL;
++	if (copy_from_user(line, buffer, count))
++		return -EFAULT;
++	line[count] = '\0';
++
++	if (sscanf(line, "%d %lx", &pid_nr, &start) != 2)
++		return -EINVAL;
++
++	memory_intent_unregister(pid_nr, start);
++	return count;
 +}
 +
 +static const struct proc_ops memory_intent_status_ops = {
@@ -121,4 +193,3 @@ index 000000000000..cf23ffaf531e
 +fs_initcall(memory_intent_proc_init);
 -- 
 2.47.0
-

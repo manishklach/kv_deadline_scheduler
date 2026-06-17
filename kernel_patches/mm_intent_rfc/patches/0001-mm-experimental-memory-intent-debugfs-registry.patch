@@ -26,58 +26,85 @@ Virtual-address ranges are used instead of PFNs because userspace naturally
 knows virtual addresses, while PFNs are unstable under migration and often
 hard to obtain.
 
+Changes from earlier version:
+  - Replace flat linked list with an interval tree for O(log n) range lookups
+  - Rename struct memory_intent_entry -> memory_intent_region
+  - Add memory_intent_register() / memory_intent_unregister() / memory_intent_lookup()
+    / memory_intent_dump_seq() as the core API expected by subsequent patches
+  - Add struct rcu_head to memory_intent_region for future RCU-safe readers
+
 This patch was compile-tested on Linux 6.8.12 and smoke-tested in QEMU
 with a successful debugfs register and dump cycle.
 
 ---
- include/linux/memory_intent.h |  37 +++++++
+ include/linux/memory_intent.h |  58 +++++++++++
  mm/Kconfig                    |  14 +++
  mm/Makefile                   |   1 +
- mm/memory_intent.c            | 197 ++++++++++++++++++++++++++++++++++
- 4 files changed, 249 insertions(+)
+ mm/memory_intent.c            | 249 ++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 322 insertions(+)
  create mode 100644 include/linux/memory_intent.h
  create mode 100644 mm/memory_intent.c
 
 diff --git a/include/linux/memory_intent.h b/include/linux/memory_intent.h
 new file mode 100644
-index 000000000..ae4151ca6
+index 000000000..b7c3d1f08
 --- /dev/null
 +++ b/include/linux/memory_intent.h
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,58 @@
 +#ifndef _LINUX_MEMORY_INTENT_H
 +#define _LINUX_MEMORY_INTENT_H
 +
-+#include <linux/list.h>
++#include <linux/interval_tree.h>
++#include <linux/rcupdate.h>
++#include <linux/seq_file.h>
 +#include <linux/types.h>
 +
-+#define MM_INTENT_LATENCY_CRITICAL 0x1
-+#define MM_INTENT_RECLAIMABLE      0x2
-+#define MM_INTENT_PREFETCHABLE     0x4
-+#define MM_INTENT_RECOMPUTE_OK     0x8
-+#define MM_INTENT_BACKGROUND       0x10
++/*
++ * Generic memory-intent flags.
++ *
++ * These are semantically rich enough for LLM KV-cache, database buffer
++ * pools, and other userspace allocators that understand their own latency
++ * and recompute costs better than the kernel does.
++ */
++#define MM_INTENT_LATENCY_CRITICAL	0x1
++#define MM_INTENT_RECLAIMABLE		0x2
++#define MM_INTENT_PREFETCHABLE		0x4
++#define MM_INTENT_RECOMPUTE_OK		0x8
++#define MM_INTENT_BACKGROUND		0x10
 +
-+struct memory_intent_entry {
-+	struct list_head node;
-+	pid_t pid;
-+	unsigned long start;
-+	unsigned long end;
-+	u64 intent_flags;
-+	u64 deadline_ns;
-+	u32 priority;
++/*
++ * One region represents a virtual-address range tagged with intent
++ * metadata.  Regions are tracked in a global interval tree keyed by
++ * (start, last) and filtered by pid at lookup time.
++ */
++struct memory_intent_region {
++	struct interval_tree_node	node;
++	pid_t				pid;
++	u64				intent_flags;
++	u64				deadline_ns;
++	u32				priority;
++	struct rcu_head			rcu;
 +};
 +
-+#if defined(CONFIG_EXPERIMENTAL_MEMORY_INTENT) || defined(CONFIG_DEBUG_FS)
++#ifdef CONFIG_EXPERIMENTAL_MEMORY_INTENT
++int memory_intent_register(struct memory_intent_region *region);
++void memory_intent_unregister(pid_t pid, unsigned long start_vaddr);
++struct memory_intent_region *
++memory_intent_lookup(pid_t pid, unsigned long vaddr);
++int memory_intent_dump_seq(struct seq_file *m);
 +int memory_intent_init_debugfs(void);
 +void memory_intent_exit_debugfs(void);
 +#else
-+static inline int memory_intent_init_debugfs(void)
++static inline int memory_intent_register(struct memory_intent_region *region)
 +{
-+	return 0;
++	return -ENOSYS;
 +}
-+
-+static inline void memory_intent_exit_debugfs(void)
-+{
-+}
++static inline void memory_intent_unregister(pid_t pid, unsigned long start_vaddr) {}
++static inline struct memory_intent_region *
++memory_intent_lookup(pid_t pid, unsigned long vaddr) { return NULL; }
++static inline int memory_intent_dump_seq(struct seq_file *m) { return 0; }
++static inline int memory_intent_init_debugfs(void) { return 0; }
++static inline void memory_intent_exit_debugfs(void) {}
 +#endif
 +
 +#endif /* _LINUX_MEMORY_INTENT_H */
@@ -120,22 +147,27 @@ index 4abb40b91..3de86e636 100644
  obj-$(CONFIG_DEBUG_PAGE_REF) += debug_page_ref.o
 diff --git a/mm/memory_intent.c b/mm/memory_intent.c
 new file mode 100644
-index 000000000..10258d108
+index 000000000..e4a6b2f8d
 --- /dev/null
 +++ b/mm/memory_intent.c
-@@ -0,0 +1,197 @@
+@@ -0,0 +1,249 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * RFC v0 experimental memory-intent registry.
 + *
 + * This file is intentionally debugfs-only research infrastructure for a
 + * pinned Linux 6.8.y validation target. It does not change reclaim behavior.
++ *
++ * Regions are stored in a global interval tree (rbtree-based) for efficient
++ * range lookup.  Write-side serialization uses a single mutex; readers
++ * (memory_intent_lookup) return a pointer under the same lock.  A future
++ * version should switch to RCU for lock-free readers.
 + */
 +
 +#include <linux/debugfs.h>
 +#include <linux/init.h>
++#include <linux/interval_tree.h>
 +#include <linux/kernel.h>
-+#include <linux/list.h>
 +#include <linux/memory_intent.h>
 +#include <linux/mutex.h>
 +#include <linux/overflow.h>
@@ -147,18 +179,98 @@ index 000000000..10258d108
 +
 +#define MM_INTENT_LINE_MAX 128
 +
-+static LIST_HEAD(memory_intent_entries);
++static struct rb_root_cached memory_intent_root = RB_ROOT_CACHED;
 +static DEFINE_MUTEX(memory_intent_lock);
 +static struct dentry *memory_intent_dir;
 +
++/*
++ * Core API
++ */
++int memory_intent_register(struct memory_intent_region *region)
++{
++	mutex_lock(&memory_intent_lock);
++	interval_tree_insert(&region->node, &memory_intent_root);
++	mutex_unlock(&memory_intent_lock);
++	return 0;
++}
++
++void memory_intent_unregister(pid_t pid, unsigned long start_vaddr)
++{
++	struct memory_intent_region *region;
++	struct interval_tree_node *node;
++
++	mutex_lock(&memory_intent_lock);
++	node = interval_tree_iter_first(&memory_intent_root,
++					start_vaddr, start_vaddr);
++	while (node) {
++		region = container_of(node, struct memory_intent_region, node);
++		if (region->pid == pid && region->node.start == start_vaddr) {
++			interval_tree_remove(node, &memory_intent_root);
++			kfree(region);
++			break;
++		}
++		node = interval_tree_iter_next(node, start_vaddr, start_vaddr);
++	}
++	mutex_unlock(&memory_intent_lock);
++}
++
++struct memory_intent_region *
++memory_intent_lookup(pid_t pid, unsigned long vaddr)
++{
++	struct memory_intent_region *region;
++	struct interval_tree_node *node;
++
++	mutex_lock(&memory_intent_lock);
++	node = interval_tree_iter_first(&memory_intent_root, vaddr, vaddr);
++	while (node) {
++		region = container_of(node, struct memory_intent_region, node);
++		if (region->pid == pid) {
++			mutex_unlock(&memory_intent_lock);
++			return region;
++		}
++		node = interval_tree_iter_next(node, vaddr, vaddr);
++	}
++	mutex_unlock(&memory_intent_lock);
++	return NULL;
++}
++
++int memory_intent_dump_seq(struct seq_file *m)
++{
++	struct memory_intent_region *region;
++	struct interval_tree_node *node;
++
++	mutex_lock(&memory_intent_lock);
++	node = interval_tree_iter_first(&memory_intent_root, 0, ULONG_MAX);
++	while (node) {
++		region = container_of(node, struct memory_intent_region, node);
++		seq_printf(m, "%d 0x%lx 0x%lx 0x%llx %llu %u\n",
++			   region->pid,
++			   region->node.start,
++			   region->node.last + 1,
++			   region->intent_flags,
++			   region->deadline_ns,
++			   region->priority);
++		node = interval_tree_iter_next(node, 0, ULONG_MAX);
++	}
++	mutex_unlock(&memory_intent_lock);
++	return 0;
++}
++
++/*
++ * Debugfs interface
++ */
 +static void memory_intent_clear_all_locked(void)
 +{
-+	struct memory_intent_entry *entry;
-+	struct memory_intent_entry *tmp;
++	struct memory_intent_region *region;
++	struct interval_tree_node *node;
 +
-+	list_for_each_entry_safe(entry, tmp, &memory_intent_entries, node) {
-+		list_del(&entry->node);
-+		kfree(entry);
++	node = interval_tree_iter_first(&memory_intent_root, 0, ULONG_MAX);
++	while (node) {
++		region = container_of(node, struct memory_intent_region, node);
++		interval_tree_remove(node, &memory_intent_root);
++		kfree(region);
++		node = interval_tree_iter_first(&memory_intent_root,
++						0, ULONG_MAX);
 +	}
 +}
 +
@@ -167,7 +279,7 @@ index 000000000..10258d108
 +					    size_t count, loff_t *ppos)
 +{
 +	char line[MM_INTENT_LINE_MAX];
-+	struct memory_intent_entry *entry;
++	struct memory_intent_region *region;
 +	struct pid *pid;
 +	struct task_struct *task;
 +	pid_t pid_nr;
@@ -187,8 +299,8 @@ index 000000000..10258d108
 +	line[count] = '\0';
 +
 +	parsed = sscanf(line, "%d %lx %lx %lx %llu %u",
-+			&pid_nr, &start, &length, &flags, &deadline_ns,
-+			&priority);
++			&pid_nr, &start, &length, &flags,
++			&deadline_ns, &priority);
 +	if (parsed != 6)
 +		return -EINVAL;
 +
@@ -207,41 +319,23 @@ index 000000000..10258d108
 +		return -ESRCH;
 +	put_task_struct(task);
 +
-+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
-+	if (!entry)
++	region = kzalloc(sizeof(*region), GFP_KERNEL);
++	if (!region)
 +		return -ENOMEM;
 +
-+	entry->pid = pid_nr;
-+	entry->start = start;
-+	entry->end = end;
-+	entry->intent_flags = flags;
-+	entry->deadline_ns = deadline_ns;
-+	entry->priority = priority;
++	region->node.start = start;
++	region->node.last = end - 1;
++	region->pid = pid_nr;
++	region->intent_flags = flags;
++	region->deadline_ns = deadline_ns;
++	region->priority = priority;
 +
-+	mutex_lock(&memory_intent_lock);
-+	list_add_tail(&entry->node, &memory_intent_entries);
-+	mutex_unlock(&memory_intent_lock);
-+
-+	return count;
++	return memory_intent_register(region) ? -ENOMEM : count;
 +}
 +
 +static int memory_intent_dump_show(struct seq_file *m, void *v)
 +{
-+	struct memory_intent_entry *entry;
-+
-+	mutex_lock(&memory_intent_lock);
-+	list_for_each_entry(entry, &memory_intent_entries, node) {
-+		seq_printf(m, "%d 0x%lx 0x%lx 0x%llx %llu %u\n",
-+			   entry->pid,
-+			   entry->start,
-+			   entry->end,
-+			   entry->intent_flags,
-+			   entry->deadline_ns,
-+			   entry->priority);
-+	}
-+	mutex_unlock(&memory_intent_lock);
-+
-+	return 0;
++	return memory_intent_dump_seq(m);
 +}
 +
 +static int memory_intent_dump_open(struct inode *inode, struct file *file)

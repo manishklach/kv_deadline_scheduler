@@ -10,32 +10,50 @@ This patch is intentionally last in the series. It should not be enabled
 until registry, observability, and DAMON reporting have been validated on
 a pinned Linux version.
 
+Changes from earlier version:
+  - Fix intent check: use intent_flags bitmap (intent_flags & MM_INTENT_*)
+    instead of comparing priority field, since intent_flags is a bitmap
+    and MM_INTENT_LATENCY_CRITICAL is a flag bit
+  - Add proper inline stubs for memory_intent_reclaim_enabled() in the
+    CONFIG_EXPERIMENTAL_MEMORY_INTENT=n case
+  - Add known-limitation comment: page_address() returns a kernel linear
+    address, not a userspace virtual address, so the intent lookup in the
+    reclaim path is a research stub; a real implementation would need a
+    page-table walk or VMA-based reverse mapping
+
 Signed-off-by: Manish Klach <kv_deadline_scheduler>
 ---
  include/linux/memory_intent.h |  2 ++
- mm/Kconfig                    |  7 ++++++
- mm/memory_intent.c            | 13 ++++++++++++
- mm/vmscan.c                   | 16 ++++++++++++++++
- 4 files changed, 38 insertions(+)
+ mm/Kconfig                    |  7 +++++++
+ mm/memory_intent.c            | 27 +++++++++++++++++++++++++++
+ mm/vmscan.c                   | 20 ++++++++++++++++++++
+ 4 files changed, 56 insertions(+)
 
 diff --git a/include/linux/memory_intent.h b/include/linux/memory_intent.h
-index 8c70d2346d84..c761df4d85d3 100644
+index b7c3d1f08..c761df4d85 100644
 --- a/include/linux/memory_intent.h
 +++ b/include/linux/memory_intent.h
-@@ -23,6 +23,8 @@ struct memory_intent_region {
- 	struct rcu_head rcu;
- };
- 
-+bool memory_intent_reclaim_enabled(void);
-+
- #ifdef CONFIG_EXPERIMENTAL_MEMORY_INTENT
- int memory_intent_register(struct memory_intent_region *region);
+@@ -38,6 +38,7 @@ int memory_intent_register(struct memory_intent_region *region);
  void memory_intent_unregister(pid_t pid, unsigned long start_vaddr);
+ struct memory_intent_region *
+ memory_intent_lookup(pid_t pid, unsigned long vaddr);
++bool memory_intent_reclaim_enabled(void);
+ int memory_intent_dump_seq(struct seq_file *m);
+ int memory_intent_init_debugfs(void);
+ void memory_intent_exit_debugfs(void);
+@@ -49,6 +50,7 @@ static inline void memory_intent_unregister(pid_t pid, unsigned long start_vaddr
+ static inline struct memory_intent_region *
+ memory_intent_lookup(pid_t pid, unsigned long vaddr) { return NULL; }
+ static inline int memory_intent_dump_seq(struct seq_file *m) { return 0; }
++static inline bool memory_intent_reclaim_enabled(void) { return false; }
+ static inline int memory_intent_init_debugfs(void) { return 0; }
+ static inline void memory_intent_exit_debugfs(void) {}
+ #endif
 diff --git a/mm/Kconfig b/mm/Kconfig
-index 15c00c842ce0..46d28a349a1c 100644
+index 15c00c842c..46d28a349a 100644
 --- a/mm/Kconfig
 +++ b/mm/Kconfig
-@@ -1253,6 +1253,13 @@ config EXPERIMENTAL_MEMORY_INTENT_PROC
+@@ -1275,6 +1275,13 @@ config EXPERIMENTAL_MEMORY_INTENT_PROC
  	help
  	  Expose registered memory-intent regions through proc for research.
  
@@ -46,34 +64,32 @@ index 15c00c842ce0..46d28a349a1c 100644
 +	  Experimental, default-off reclaim policy hook. Enable only after
 +	  the observability path has been validated.
 +
- endmenu
+ source "mm/damon/Kconfig"
  
- menu "Memory Debugging"
+ endmenu
 diff --git a/mm/memory_intent.c b/mm/memory_intent.c
-index 6676496e2fb1..9752493c52f1 100644
+index e4a6b2f8d..c3f9d1e7b 100644
 --- a/mm/memory_intent.c
 +++ b/mm/memory_intent.c
-@@ -5,6 +5,7 @@
- #include <linux/rculist.h>
+@@ -24,6 +24,7 @@
+ #include <linux/seq_file.h>
  #include <linux/slab.h>
- #include <linux/spinlock.h>
 +#include <linux/static_key.h>
+ #include <linux/uaccess.h>
  
- static LIST_HEAD(memory_intent_regions);
- static DEFINE_SPINLOCK(memory_intent_lock);
-@@ -12,6 +13,8 @@ static DEFINE_SPINLOCK(memory_intent_lock);
- static void memory_intent_free_rcu(struct rcu_head *rcu)
- {
- 	struct memory_intent_region *region =
- 		container_of(rcu, struct memory_intent_region, rcu);
-@@ -19,6 +22,16 @@ static void memory_intent_free_rcu(struct rcu_head *rcu)
- 	kfree(region);
- }
- 
+ #define MM_INTENT_LINE_MAX 128
+@@ -30,6 +31,13 @@
+ static DEFINE_MUTEX(memory_intent_lock);
 +#ifdef CONFIG_EXPERIMENTAL_MEMORY_INTENT_RECLAIM
 +DEFINE_STATIC_KEY_FALSE(memory_intent_reclaim_key);
 +#endif
-+
+ static struct dentry *memory_intent_dir;
+ 
+ /*
+@@ -99,6 +107,26 @@ int memory_intent_dump_seq(struct seq_file *m)
+ 	return 0;
+ }
+ 
 +bool memory_intent_reclaim_enabled(void)
 +{
 +#ifdef CONFIG_EXPERIMENTAL_MEMORY_INTENT_RECLAIM
@@ -83,8 +99,9 @@ index 6676496e2fb1..9752493c52f1 100644
 +#endif
 +}
 +
- int memory_intent_register(struct memory_intent_region *region)
- {
+ /*
+  * Debugfs interface
+  */
 diff --git a/mm/vmscan.c b/mm/vmscan.c
 index 94d0f5c1dc80..a27902c2b1f8 100644
 --- a/mm/vmscan.c
@@ -105,17 +122,26 @@ index 94d0f5c1dc80..a27902c2b1f8 100644
  
  	cond_resched();
  
-@@ -1578,6 +1580,20 @@ static unsigned int shrink_page_list(struct list_head *page_list,
+@@ -1578,6 +1580,24 @@ static unsigned int shrink_page_list(struct list_head *page_list,
  		if (!sc->may_unmap && page_mapped(page))
  			goto keep_locked;
  
 +		if (memory_intent_reclaim_enabled()) {
++			/*
++			 * NOTE: page_address() returns the kernel linear-map
++			 * virtual address, not the userspace virtual address
++			 * stored in the intent registry.  A correct lookup
++			 * would need a page-table walk or VMA-based rmap.
++			 *
++			 * This is a research stub.  For experiments where
++			 * the direct-map and user-space addresses coincide
++			 * (e.g., simple test harnesses with MAP_FIXED), this
++			 * may produce useful results.
++			 */
 +			intent = memory_intent_lookup(current->pid,
-+						      page_address(page) ?
-+						      (unsigned long)page_address(page) :
-+						      0);
++				(unsigned long)page_address(page));
 +			if (intent &&
-+			    intent->priority == MM_INTENT_LATENCY_CRITICAL &&
++			    (intent->intent_flags & MM_INTENT_LATENCY_CRITICAL) &&
 +			    !sc->may_swap)
 +				goto keep_locked;
 +		}
