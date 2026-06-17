@@ -32,7 +32,7 @@ class MemoryIntentEvent:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> "MemoryIntentEvent":
+    def from_dict(cls, data: dict[str, object]) -> MemoryIntentEvent:
         return cls(
             step=int(data["step"]),
             event_type=EventType(str(data["event_type"])),
@@ -45,5 +45,5 @@ class MemoryIntentEvent:
         return json.dumps(self.to_dict(), sort_keys=True)
 
     @classmethod
-    def from_json(cls, value: str) -> "MemoryIntentEvent":
+    def from_json(cls, value: str) -> MemoryIntentEvent:
         return cls.from_dict(json.loads(value))

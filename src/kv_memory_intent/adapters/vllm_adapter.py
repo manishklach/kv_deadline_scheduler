@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 from ..events import MemoryIntentEvent
 from ..schema import EventType, MemoryIntent, ObjectType, Phase, Priority, Tier
 from ..trace import IntentTraceRecorder

@@ -108,7 +108,7 @@ class MemoryIntent:
         return data
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> "MemoryIntent":
+    def from_dict(cls, data: dict[str, object]) -> MemoryIntent:
         return cls(
             object_id=str(data["object_id"]),
             request_id=str(data["request_id"]),
@@ -146,10 +146,10 @@ class MemoryIntent:
             last_access_step=int(data.get("last_access_step", 0)),
         )
 
-    def copy_with(self, **kwargs: object) -> "MemoryIntent":
+    def copy_with(self, **kwargs: object) -> MemoryIntent:
         return replace(self, **kwargs)
 
-    def normalized(self) -> "MemoryIntent":
+    def normalized(self) -> MemoryIntent:
         if self.phase == Phase.DONE and self.priority != Priority.COLD:
             return self.copy_with(priority=Priority.COLD)
         return self.copy_with()

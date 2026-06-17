@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from math import ceil
 from pathlib import Path
-from typing import Iterable
 
 from ..events import MemoryIntentEvent
 from ..kv_estimator import MODEL_PRESETS, ModelKVConfig, kv_bytes_per_token

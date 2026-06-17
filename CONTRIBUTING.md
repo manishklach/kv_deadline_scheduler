@@ -6,6 +6,9 @@
 git clone https://github.com/manishklach/kv_deadline_scheduler.git
 cd kv_deadline_scheduler
 pip install -e .[dev]
+pre-commit install
+python -m ruff check src tests
+python -m mypy
 python -m pytest
 ```
 
@@ -27,6 +30,22 @@ See [integrations/external_trace/request_trace_format.md](integrations/external_
 
 ## Code Style
 
-- Use `ruff` or `black`.
+- Use `ruff` for linting and formatting.
 - Type hints are required.
 - Use `slots=True` on new dataclasses.
+
+## Optional Plotting Support
+
+Plotting helpers are optional and live behind an extra:
+
+```bash
+pip install -e .[plotting]
+```
+
+## Before Opening A PR
+
+```bash
+python -m ruff check src tests
+python -m mypy
+python -m pytest
+```

@@ -2,9 +2,9 @@ from pathlib import Path
 
 from kv_memory_intent.kv_estimator import MODEL_PRESETS
 from kv_memory_intent.request_trace import RequestTraceRecord
+from kv_memory_intent.simulator import KVMemorySimulator, policy_from_name
 from kv_memory_intent.trace import IntentTraceRecorder
 from kv_memory_intent.trace_importer import request_trace_to_intent_events
-from kv_memory_intent.simulator import KVMemorySimulator, policy_from_name
 
 
 def sample_records() -> list[RequestTraceRecord]:

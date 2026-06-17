@@ -40,6 +40,8 @@ class SimulationResult:
     peak_hbm_demand_bytes: int
     actual_peak_hbm_used_bytes: int
     hbm_bytes_saved: int
+    capacity_exhaustion_events: int
+    pinned_capacity_exhaustion_events: int
     spill_count: int
     prefetch_count: int
     miss_count: int
@@ -64,6 +66,8 @@ class SimulationResult:
             "peak_hbm_demand_bytes": self.peak_hbm_demand_bytes,
             "actual_peak_hbm_used_bytes": self.actual_peak_hbm_used_bytes,
             "hbm_bytes_saved": self.hbm_bytes_saved,
+            "capacity_exhaustion_events": self.capacity_exhaustion_events,
+            "pinned_capacity_exhaustion_events": self.pinned_capacity_exhaustion_events,
             "spill_count": self.spill_count,
             "prefetch_count": self.prefetch_count,
             "miss_count": self.miss_count,
@@ -78,6 +82,15 @@ class SimulationResult:
             "final_hbm_used_bytes": self.final_hbm_used_bytes,
             "final_dram_used_bytes": self.final_dram_used_bytes,
         }
+
+
+@dataclass(slots=True)
+class SyntheticRequestState:
+    request_id: str
+    block_ids: list[str]
+    request_priority: int
+    is_high: bool
+    hot_span: int
 
 
 class KVMemorySimulator:
@@ -112,6 +125,8 @@ class KVMemorySimulator:
         self.decode_critical_evictions = 0
         self.peak_hbm_demand_bytes = 0
         self.actual_peak_hbm_used_bytes = 0
+        self.capacity_exhaustion_events = 0
+        self.pinned_capacity_exhaustion_events = 0
         self._last_decay_step: int = -1
 
     def _used_bytes(self, ids: Iterable[str]) -> int:
@@ -170,8 +185,29 @@ class KVMemorySimulator:
         added_latency = 0
         while self._hbm_used() > self.hbm_capacity_bytes:
             candidates = [self.live_blocks[object_id] for object_id in self.hbm_blocks if object_id in self.live_blocks]
+            if candidates and all(block.pin_requested for block in candidates) and isinstance(
+                self.policy, (IntentAwarePolicy, DeadlineAwarePolicy)
+            ):
+                self.capacity_exhaustion_events += 1
+                self.pinned_capacity_exhaustion_events += 1
+                self.decision_log.append(
+                    {
+                        "step": current_step,
+                        "action": "capacity_exhausted",
+                        "policy": self.policy.name,
+                        "victim_object_id": None,
+                        "victim_priority": None,
+                        "victim_phase": None,
+                        "victim_request_priority": None,
+                        "victim_deadline_us": None,
+                        "reason": "HBM remained over capacity because all resident blocks were pinned.",
+                        "avoided_decode_critical": False,
+                    }
+                )
+                break
             victim = self.policy.choose_victim(candidates, self.hbm_capacity_bytes, current_step)
             if victim is None:
+                self.capacity_exhaustion_events += 1
                 break
             reason = self.policy.explain_victim_choice(victim, candidates, current_step)
             avoided_decode_critical = any(
@@ -367,19 +403,22 @@ class KVMemorySimulator:
             elif event.event_type == EventType.PREFETCHED:
                 block = self.live_blocks.get(intent.object_id)
                 if block is not None and block.object_id not in self.hbm_blocks:
-                    block = self._merge_intent(block, intent)
-                    self.live_blocks[block.object_id] = block
-                    should_prefetch = self.policy.should_prefetch(block, event.step)
+                    merged_block = self._merge_intent(block, intent)
+                    self.live_blocks[merged_block.object_id] = merged_block
+                    should_prefetch = self.policy.should_prefetch(merged_block, event.step)
                     if should_prefetch:
                         self.prefetch_count += 1
                         latency += self.prefetch_latency_us
-                        latency += self._move_to_hbm(block, event.step)
+                        latency += self._move_to_hbm(merged_block, event.step)
                         self._log_decision(
                             event.step,
                             "prefetch",
-                            block,
-                            [block],
-                            f"Prefetched {block.object_id} because it is urgent and prefetchable under {self.policy.name}.",
+                            merged_block,
+                            [merged_block],
+                            (
+                                f"Prefetched {merged_block.object_id} because it is urgent "
+                                f"and prefetchable under {self.policy.name}."
+                            ),
                             avoided_decode_critical=False,
                         )
             elif event.event_type == EventType.EVICTED:
@@ -408,12 +447,14 @@ class KVMemorySimulator:
         return SimulationResult(
             policy_name=self.policy.name,
             total_blocks=total_blocks,
-            total_steps=max((event.step for event in events), default=0) + 1,
+            total_steps=max((event.step for event in events), default=-1) + 1,
             hbm_capacity_bytes=self.hbm_capacity_bytes,
             dram_capacity_bytes=self.dram_capacity_bytes,
             peak_hbm_demand_bytes=self.peak_hbm_demand_bytes,
             actual_peak_hbm_used_bytes=self.actual_peak_hbm_used_bytes,
             hbm_bytes_saved=max(self.peak_hbm_demand_bytes - self.actual_peak_hbm_used_bytes, 0),
+            capacity_exhaustion_events=self.capacity_exhaustion_events,
+            pinned_capacity_exhaustion_events=self.pinned_capacity_exhaustion_events,
             spill_count=self.spill_count,
             prefetch_count=self.prefetch_count,
             miss_count=self.miss_count,
@@ -488,7 +529,7 @@ def generate_synthetic_kv_workload(
     reuse_scale = settings["reuse_scale"]
 
     events: list[MemoryIntentEvent] = []
-    requests: list[dict[str, object]] = []
+    requests: list[SyntheticRequestState] = []
     step = 0
 
     for request_index in range(num_requests):
@@ -557,21 +598,21 @@ def generate_synthetic_kv_workload(
             step += 1
 
         requests.append(
-            {
-                "request_id": request_id,
-                "block_ids": block_ids,
-                "request_priority": request_priority,
-                "is_high": is_high,
-                "hot_span": hot_span,
-            }
+            SyntheticRequestState(
+                request_id=request_id,
+                block_ids=block_ids,
+                request_priority=request_priority,
+                is_high=is_high,
+                hot_span=hot_span,
+            )
         )
 
     total_requests = len(requests)
     for decode_step in range(decode_steps):
         active = requests[decode_step % total_requests]
-        block_ids = list(active["block_ids"])
-        is_high = bool(active["is_high"])
-        hot_span = int(active["hot_span"])
+        block_ids = list(active.block_ids)
+        is_high = active.is_high
+        hot_span = active.hot_span
         current_hot = block_ids[-hot_span:]
         cold_candidates = block_ids[:-hot_span]
 
@@ -580,7 +621,7 @@ def generate_synthetic_kv_workload(
             slack_us = 250 if profile == "deadline_pressure" else 1_500 if is_high else 3_500
             intent = MemoryIntent(
                 object_id=object_id,
-                request_id=str(active["request_id"]),
+                request_id=active.request_id,
                 block_id=int(object_id.rsplit(":", 1)[-1]),
                 object_type=ObjectType.KV_CACHE,
                 phase=Phase.DECODE,
@@ -588,7 +629,7 @@ def generate_synthetic_kv_workload(
                 allowed_tiers={Tier.HBM, Tier.DRAM},
                 current_tier=Tier.HBM,
                 size_bytes=block_size_bytes,
-                request_priority=int(active["request_priority"]),
+                request_priority=active.request_priority,
                 recency_score=1.0 - (offset * 0.1),
                 deadline_us=deadline_us,
                 slack_us=slack_us,
@@ -625,10 +666,10 @@ def generate_synthetic_kv_workload(
 
         if cold_candidates:
             stale_id = cold_candidates[decode_step % len(cold_candidates)]
-            low_prio = max(int(active["request_priority"]) - (45 if profile == "rag_mixed_priority" else 20), 0)
+            low_prio = max(active.request_priority - (45 if profile == "rag_mixed_priority" else 20), 0)
             stale_intent = MemoryIntent(
                 object_id=stale_id,
-                request_id=str(active["request_id"]),
+                request_id=active.request_id,
                 block_id=int(stale_id.rsplit(":", 1)[-1]),
                 object_type=ObjectType.KV_CACHE,
                 phase=Phase.DONE if decode_step % 7 == 0 else Phase.VERIFY,

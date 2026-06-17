@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable
 
 
 @dataclass(slots=True)
@@ -39,7 +39,7 @@ class RequestTraceRecord:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> "RequestTraceRecord":
+    def from_dict(cls, data: dict[str, object]) -> RequestTraceRecord:
         return cls(
             request_id=str(data["request_id"]),
             arrival_ms=int(data["arrival_ms"]),
@@ -57,7 +57,7 @@ class RequestTraceRecord:
         return json.dumps(self.to_dict(), sort_keys=True)
 
     @classmethod
-    def from_json(cls, value: str) -> "RequestTraceRecord":
+    def from_json(cls, value: str) -> RequestTraceRecord:
         return cls.from_dict(json.loads(value))
 
 

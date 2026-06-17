@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from kv_memory_intent.events import MemoryIntentEvent
 from kv_memory_intent.policies import DeadlineAwarePolicy
-from kv_memory_intent.schema import EventType, MemoryIntent, Phase, Priority
+from kv_memory_intent.schema import MemoryIntent, Phase, Priority
 
 
 @dataclass(slots=True)

@@ -21,8 +21,8 @@ from .policies import (
     PlacementPolicy,
     PredictiveHotnessPolicy,
 )
-from .schema import EventType, MemoryIntent, ObjectType, Phase, Priority, Tier
 from .request_trace import RequestTraceRecord, load_request_trace, write_request_trace
+from .schema import EventType, MemoryIntent, ObjectType, Phase, Priority, Tier
 from .simulator import KVMemorySimulator, SimulationResult, WorkloadProfile, generate_synthetic_kv_workload
 from .speculative import DraftNode, DraftTree, SpeculativeIntentPolicy, generate_speculative_workload
 from .trace import IntentTraceRecorder

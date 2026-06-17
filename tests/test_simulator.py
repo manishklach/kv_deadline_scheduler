@@ -169,3 +169,40 @@ def test_marked_cold_does_not_overwrite_size_or_recompute_cost():
     block = simulator.live_blocks["req-2:block:0"]
     assert block.size_bytes == 8192
     assert block.recompute_cost_us == 9000
+
+
+def test_empty_trace_returns_zero_step_result():
+    result = KVMemorySimulator(policy_from_name("lru"), 8 * 1024, 64 * 1024).run([])
+    assert result.total_blocks == 0
+    assert result.total_steps == 0
+    assert result.total_latency_us == 0
+    assert result.p50_latency_us == 0.0
+    assert result.p95_latency_us == 0.0
+    assert result.p99_latency_us == 0.0
+
+
+def test_pinned_only_hbm_pressure_records_capacity_exhaustion():
+    pinned = MemoryIntent(
+        object_id="req-pinned:block:0",
+        request_id="req-pinned",
+        block_id=0,
+        object_type=ObjectType.KV_CACHE,
+        phase=Phase.DECODE,
+        priority=Priority.DECODE_CRITICAL,
+        allowed_tiers={Tier.HBM, Tier.DRAM},
+        current_tier=Tier.HBM,
+        size_bytes=4096,
+        request_priority=100,
+        recency_score=1.0,
+        deadline_us=500,
+        slack_us=100,
+        pin_requested=True,
+        created_step=0,
+        last_access_step=0,
+    )
+    simulator = KVMemorySimulator(policy_from_name("deadline"), 1024, 64 * 1024)
+    result = simulator.run([MemoryIntentEvent(step=0, event_type=EventType.ALLOCATED, intent=pinned)])
+    assert result.capacity_exhaustion_events == 1
+    assert result.pinned_capacity_exhaustion_events == 1
+    assert result.actual_peak_hbm_used_bytes > result.hbm_capacity_bytes
+    assert simulator.decision_log[-1]["action"] == "capacity_exhausted"

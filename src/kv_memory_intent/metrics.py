@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from collections.abc import Sequence
 from math import floor
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -27,7 +28,7 @@ SWEEP_COLUMNS = [
 ]
 
 
-def percentile(values: list[int | float], p: float) -> float:
+def percentile(values: Sequence[int | float], p: float) -> float:
     if not values:
         return 0.0
     if p < 0 or p > 100:
@@ -54,7 +55,7 @@ def format_bytes(num_bytes: int) -> str:
     return f"{value:.1f} TiB"
 
 
-def compare_results(results: list["SimulationResult"]) -> str:
+def compare_results(results: list[SimulationResult]) -> str:
     if not results:
         return "No results."
     baseline = next((result for result in results if result.policy_name == "LRU"), results[0])

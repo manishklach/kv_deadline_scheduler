@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from .events import MemoryIntentEvent
 from .metrics import format_bytes
@@ -26,7 +26,7 @@ class IntentTraceRecorder:
         output.write_text("\n".join(event.to_json() for event in self.events) + "\n", encoding="utf-8")
 
     @classmethod
-    def from_jsonl(cls, path: str | Path) -> "IntentTraceRecorder":
+    def from_jsonl(cls, path: str | Path) -> IntentTraceRecorder:
         recorder = cls()
         for line in Path(path).read_text(encoding="utf-8").splitlines():
             if line.strip():
