@@ -59,6 +59,8 @@ The kernel patch story was also cleaned up:
 - the current RFC lane is now `kernel_patches/mm_intent_rfc/`
 - the first compile-targeted RFC milestone is now a debugfs-only, observability-first memory-intent registry aimed at Linux `6.8.y`
 
+This includes the generic `mm_intent_rfc` cleanup plus the first true kernel validation milestone: patch `0001` was compile-targeted on Linux `6.8.12`, QEMU booted, `debugfs` was mounted, and a successful register/dump cycle is documented in the repo.
+
 ## New Kernel-Facing Additions
 
 ### Loadable module prototypes
