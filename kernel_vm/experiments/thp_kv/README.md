@@ -26,3 +26,19 @@ python3 kv_thp_alloc.py
 ## Why This Matters
 
 A 2 MB THP-backed KV block can reduce TLB pressure by roughly `512x` compared with 4 KB pages. That does not guarantee better serving latency, but it is a meaningful kernel-facing primitive for long-context KV experiments.
+
+## Observed On WSL2 (2026-06-17)
+
+Observed result file:
+
+- `seq_normal_mb_s = 7516.74`
+- `seq_thp_mb_s = 11005.06`
+- `random_normal_mpps = 8.2218`
+- `random_thp_mpps = 13.2713`
+
+This particular run showed a positive throughput signal for the THP-backed mapping. The Python wrapper still reported `AnonHugePages_kB = 0`, so the accounting signal is weaker than the throughput signal and should be treated cautiously.
+
+See also:
+
+- [`results/thp_alloc_result.json`](results/thp_alloc_result.json)
+- [../../../docs/wsl_validation_2026_06_17.md](../../../docs/wsl_validation_2026_06_17.md)

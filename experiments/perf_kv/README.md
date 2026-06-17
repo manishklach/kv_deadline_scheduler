@@ -24,3 +24,18 @@ gcc -O2 -Wall -Wextra kv_perf_counters.c -o kv_perf_counters -lpthread
 ## Why This Matters
 
 The simulator's `miss_penalty_us` is a modeling simplification. These counters help ground that idea in real cache-miss behavior on Linux.
+
+## Observed On WSL2 (2026-06-17)
+
+Observed miss rates:
+
+- sequential: `2.02%`
+- KV-random: `47.44%`
+- evicted-KV: `41.98%`
+
+This is one of the cleanest real-system signals in the repository so far. The KV-like and evicted patterns are dramatically more miss-heavy than sequential access, which supports modeling non-trivial penalties for cold or poorly placed KV state.
+
+See also:
+
+- [`results/perf_result.json`](results/perf_result.json)
+- [../../docs/wsl_validation_2026_06_17.md](../../docs/wsl_validation_2026_06_17.md)

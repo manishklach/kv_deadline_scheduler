@@ -1,0 +1,11 @@
+{
+  "seq_normal_mb_s": 7516.74,
+  "seq_thp_mb_s": 11005.06,
+  "random_normal_mpps": 8.2218,
+  "random_thp_mpps": 13.2713,
+  "anon_huge_pages_kb": -1,
+  "smaps": {
+    "AnonHugePages_kB": 0
+  },
+  "memory_intent_note": "A 2MB THP-backed KV block reduces TLB pressure by about 512x versus 4KB pages. For a 128k-token context at 64KB/block, that can cut TLB entries from 2048 to 4 per request."
+}

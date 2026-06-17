@@ -25,6 +25,23 @@ python3 kv_io_uring_vs_sync.py
 - Lower p95 and p99 suggest a better prefetch path for near-deadline KV blocks.
 - This remains a storage-side approximation, not real GPU HBM control.
 
+## Observed On WSL2 (2026-06-17)
+
+The raw `io_uring` path ran successfully after aligning the `IORING_OP_READ` opcode to the local Linux header ABI.
+
+Observed result:
+
+- `p50_us = 332.11`
+- `p95_us = 1495.30`
+- `p99_us = 2378.01`
+
+Observed sync comparison:
+
+- sync total time: `29.99 ms`
+- `io_uring` total time: `154.05 ms`
+
+That is an honest negative result for this environment: the current userspace `io_uring` prototype works, but it is slower than synchronous `pread` on this WSL storage stack and workload shape.
+
 ## Ring Structure
 
 ```text
@@ -36,3 +53,8 @@ submission queue head/tail ---> SQ ring entries ---> SQEs
                                           v
 completion queue head/tail <--- CQ ring entries <--- CQEs
 ```
+
+See also:
+
+- [`results/io_uring_result.json`](results/io_uring_result.json)
+- [../../docs/wsl_validation_2026_06_17.md](../../docs/wsl_validation_2026_06_17.md)

@@ -116,3 +116,4 @@ These experiments are approximations. `madvise` is advisory. DAMON availability 
 - [../experiments/io_uring_kv/README.md](../experiments/io_uring_kv/README.md)
 - [../experiments/perf_kv/README.md](../experiments/perf_kv/README.md)
 - [run_all_experiments.sh](run_all_experiments.sh)
+- [../docs/wsl_validation_2026_06_17.md](../docs/wsl_validation_2026_06_17.md)

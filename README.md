@@ -108,6 +108,25 @@ More background:
 - Linux-first userspace I/O priority emulation benchmark
 - Docs for external trace import, optional runtime instrumentation, reproducibility, and results capture
 
+## WSL Validation Snapshot
+
+The repository has now been exercised on a real WSL2 Linux environment and not just through unit tests.
+
+| Track | Status | Headline result |
+|---|---|---|
+| Policy sweep | Ran | `deadline_pressure` `dc_miss_rate`: `lru=0.04494`, `intent=0.00281`, `deadline=0.00281` |
+| Linux I/O priority | Ran | separated mode reduced worst-case critical-read latency from `48.05 ms` to `14.22 ms` |
+| `madvise` VM track | Ran with limited kernel support | `MADV_WILLNEED` worked, `MADV_COLD` / `MADV_PAGEOUT` / `MADV_DONTNEED` returned `EINVAL` |
+| THP | Ran | THP region measured `11005.06 MB/s` sequential versus `7516.74 MB/s` baseline |
+| `perf_event_open` | Ran | miss rate rose from `2.02%` sequential to `47.44%` for KV-random access |
+| raw `io_uring` | Ran | functional, but slower than sync on this WSL stack in the current prototype |
+| DAMON | Blocked | `/sys/kernel/mm/damon/admin` not exposed |
+| `userfaultfd` | Blocked | `vm.unprivileged_userfaultfd = 0` and this session had no non-interactive `sudo` |
+
+Full notes and exact outputs:
+
+- [docs/wsl_validation_2026_06_17.md](docs/wsl_validation_2026_06_17.md)
+
 ## Relationship to Linux Deadline I/O Scheduling
 
 Linux `mq-deadline` handles storage request deadlines. KV Deadline Scheduler handles AI request-state deadlines.
@@ -155,6 +174,7 @@ For reproducible runs and result capture:
 
 - [docs/reproducibility.md](docs/reproducibility.md)
 - [docs/results_template.md](docs/results_template.md)
+- [docs/wsl_validation_2026_06_17.md](docs/wsl_validation_2026_06_17.md)
 
 ## External KV Estimation
 

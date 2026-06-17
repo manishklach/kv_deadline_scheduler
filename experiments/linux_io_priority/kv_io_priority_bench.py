@@ -18,6 +18,7 @@ import os
 import platform
 import random
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -346,8 +347,9 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     ensure_file(critical_path, critical_size, pattern_byte=0x43)
     ensure_file(background_path, background_size, pattern_byte=0x53)
 
-    critical_result_path = base_dir / "critical_result.json"
-    background_result_path = base_dir / "background_result.json"
+    temp_dir = Path(tempfile.mkdtemp(prefix="kvio-results-", dir=str(base_dir)))
+    critical_result_path = temp_dir / "critical_result.json"
+    background_result_path = temp_dir / "background_result.json"
     start_time = time.monotonic()
     critical_process = mp.Process(
         target=critical_reader,
@@ -378,12 +380,15 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     background_process.join()
     end_time = time.monotonic()
 
-    received = {
-        "critical": json.loads(critical_result_path.read_text(encoding="utf-8")),
-        "background": json.loads(background_result_path.read_text(encoding="utf-8")),
-    }
-    critical_result_path.unlink(missing_ok=True)
-    background_result_path.unlink(missing_ok=True)
+    try:
+        received = {
+            "critical": json.loads(critical_result_path.read_text(encoding="utf-8")),
+            "background": json.loads(background_result_path.read_text(encoding="utf-8")),
+        }
+    finally:
+        critical_result_path.unlink(missing_ok=True)
+        background_result_path.unlink(missing_ok=True)
+        temp_dir.rmdir()
 
     return build_result(
         args.mode,

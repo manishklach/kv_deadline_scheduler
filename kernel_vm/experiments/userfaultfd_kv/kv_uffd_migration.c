@@ -23,7 +23,7 @@
 #define DRAM_SIZE (256UL * MB)
 #define BLOCK_SIZE (4UL * MB)
 #define NUM_BLOCKS 16
-#define DECODE_STEPS 1000
+#define DECODE_STEPS 256
 
 struct context {
     int uffd;
@@ -82,7 +82,8 @@ static void write_results(struct context *ctx) {
     memcpy(tmp, ctx->latencies_us, ctx->latency_count * sizeof(uint64_t));
     fprintf(out, "  \"p95_us\": %" PRIu64 ",\n", percentile(tmp, ctx->latency_count, 95.0));
     memcpy(tmp, ctx->latencies_us, ctx->latency_count * sizeof(uint64_t));
-    fprintf(out, "  \"p99_us\": %" PRIu64 "\n", percentile(tmp, ctx->latency_count, 99.0));
+    fprintf(out, "  \"p99_us\": %" PRIu64 ",\n", percentile(tmp, ctx->latency_count, 99.0));
+    fprintf(out, "  \"note\": \"Each logical KV block is represented by the first page of a 4MB region. This is a block-level migration proxy, not full-page-set migration.\"\n");
     fprintf(out, "}\n");
     fclose(out);
 }
@@ -130,7 +131,14 @@ static void *fault_handler(void *arg) {
             ctx->block_migrated[block_index] = 1;
         }
         ctx->migration_count++;
-        printf("fault addr=0x%lx block=%zu latency=%" PRIu64 "us\n", (unsigned long) fault_addr, block_index, end_us - start_us);
+        if (ctx->migration_count <= 16) {
+            printf(
+                "fault addr=0x%lx block=%zu latency=%" PRIu64 "us\n",
+                (unsigned long) fault_addr,
+                block_index,
+                end_us - start_us
+            );
+        }
     }
     return NULL;
 }
@@ -190,7 +198,7 @@ int main(void) {
     srand(42);
     for (size_t step = 0; step < DECODE_STEPS; ++step) {
         size_t block = (size_t) (rand() % NUM_BLOCKS);
-        size_t offset = block * BLOCK_SIZE + (size_t) (rand() % BLOCK_SIZE);
+        size_t offset = block * BLOCK_SIZE;
         volatile uint8_t value = ctx.hbm_region[offset];
         (void) value;
     }

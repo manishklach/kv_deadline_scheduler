@@ -1,0 +1,10 @@
+{
+  "p50_us": 332.11,
+  "p95_us": 1495.3,
+  "p99_us": 2378.01,
+  "mean_us": 601.76,
+  "decode_steps": 256,
+  "blocks_per_step": 4,
+  "block_size_kb": 256,
+  "note": "This is a userspace io_uring KV-prefetch emulation, not GPU memory control."
+}

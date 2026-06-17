@@ -22,7 +22,7 @@
 #define HBM_SIZE (64UL * MB)
 #define BLOCK_SIZE (4UL * MB)
 #define NUM_BLOCKS 16
-#define DECODE_STEPS 1000
+#define DECODE_STEPS 256
 
 struct context {
     int uffd;
@@ -32,6 +32,21 @@ struct context {
     uint8_t block_present[NUM_BLOCKS];
     size_t fault_count;
 };
+
+static void write_results(size_t fault_count, double hit_rate) {
+    (void) mkdir("results", 0755);
+    FILE *out = fopen("results/uffd_prefetch_result.json", "w");
+    if (out == NULL) {
+        perror("fopen");
+        return;
+    }
+    fprintf(out, "{\n");
+    fprintf(out, "  \"reactive_faults\": %zu,\n", fault_count);
+    fprintf(out, "  \"prefetch_hit_rate_pct\": %.2f,\n", hit_rate);
+    fprintf(out, "  \"note\": \"Prefetch copies the first page of each predicted 4MB logical block as a block-level proxy.\"\n");
+    fprintf(out, "}\n");
+    fclose(out);
+}
 
 static int copy_page(struct context *ctx, uintptr_t page_addr) {
     size_t page_offset = page_addr - (uintptr_t) ctx->hbm_region;
@@ -132,11 +147,9 @@ int main(void) {
         if (ctx.block_present[predicted]) {
             prefetch_hits++;
         } else {
-            for (size_t page = 0; page < BLOCK_SIZE; page += ctx.page_size) {
-                uintptr_t page_addr = (uintptr_t) ctx.hbm_region + predicted * BLOCK_SIZE + page;
-                if (copy_page(&ctx, page_addr) == -1 && errno != EEXIST) {
-                    perror("prefetch UFFDIO_COPY");
-                }
+            uintptr_t page_addr = (uintptr_t) ctx.hbm_region + predicted * BLOCK_SIZE;
+            if (copy_page(&ctx, page_addr) == -1 && errno != EEXIST) {
+                perror("prefetch UFFDIO_COPY");
             }
             ctx.block_present[predicted] = 1;
         }
@@ -151,5 +164,6 @@ int main(void) {
     printf("Reactive faults: %zu\n", ctx.fault_count);
     printf("Prefetch hit rate: %.2f%%\n", hit_rate);
     printf("This experiment models proactive KV block migration before the next decode-like step.\n");
+    write_results(ctx.fault_count, hit_rate);
     return 0;
 }

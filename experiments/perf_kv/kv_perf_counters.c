@@ -17,6 +17,13 @@
 #define MB (1024UL * 1024UL)
 #define REGION_SIZE (256UL * MB)
 
+struct pattern_result {
+    uint64_t instructions;
+    uint64_t cache_refs;
+    uint64_t cache_misses;
+    double miss_rate;
+};
+
 static long perf_open(struct perf_event_attr *hw_event) {
     return syscall(__NR_perf_event_open, hw_event, 0, -1, -1, 0);
 }
@@ -61,7 +68,9 @@ static uint64_t read_counter(int fd) {
     return value;
 }
 
-static void measure_pattern(const char *label, uint8_t *region, size_t size) {
+static struct pattern_result measure_pattern(const char *label, uint8_t *region, size_t size) {
+    struct pattern_result result;
+    memset(&result, 0, sizeof(result));
     int misses = open_counter(PERF_COUNT_HW_CACHE_MISSES);
     int refs = open_counter(PERF_COUNT_HW_CACHE_REFERENCES);
     int instructions = open_counter(PERF_COUNT_HW_INSTRUCTIONS);
@@ -83,15 +92,23 @@ static void measure_pattern(const char *label, uint8_t *region, size_t size) {
     ioctl(refs, PERF_EVENT_IOC_DISABLE, 0);
     ioctl(instructions, PERF_EVENT_IOC_DISABLE, 0);
 
-    uint64_t miss_count = read_counter(misses);
-    uint64_t ref_count = read_counter(refs);
-    uint64_t inst_count = read_counter(instructions);
-    double miss_rate = ref_count == 0 ? 0.0 : (100.0 * (double) miss_count / (double) ref_count);
-    printf("%-12s | %-12" PRIu64 " | %-10" PRIu64 " | %-12" PRIu64 " | %6.2f%%\n", label, inst_count, ref_count, miss_count, miss_rate);
+    result.cache_misses = read_counter(misses);
+    result.cache_refs = read_counter(refs);
+    result.instructions = read_counter(instructions);
+    result.miss_rate = result.cache_refs == 0 ? 0.0 : (100.0 * (double) result.cache_misses / (double) result.cache_refs);
+    printf(
+        "%-12s | %-12" PRIu64 " | %-10" PRIu64 " | %-12" PRIu64 " | %6.2f%%\n",
+        label,
+        result.instructions,
+        result.cache_refs,
+        result.cache_misses,
+        result.miss_rate
+    );
 
     close(misses);
     close(refs);
     close(instructions);
+    return result;
 }
 
 int main(void) {
@@ -106,14 +123,32 @@ int main(void) {
     }
 
     printf("Pattern      | Instructions | Cache refs | Cache misses | Miss rate\n");
-    measure_pattern("sequential", region, REGION_SIZE);
-    measure_pattern("kv-random", region, REGION_SIZE);
-    measure_pattern("evicted-kv", region, REGION_SIZE);
+    struct pattern_result sequential = measure_pattern("sequential", region, REGION_SIZE);
+    struct pattern_result kv_random = measure_pattern("kv-random", region, REGION_SIZE);
+    struct pattern_result evicted_kv = measure_pattern("evicted-kv", region, REGION_SIZE);
 
     (void) mkdir("results", 0755);
     FILE *out = fopen("results/perf_result.json", "w");
     if (out != NULL) {
         fprintf(out, "{\n");
+        fprintf(out, "  \"sequential\": {\n");
+        fprintf(out, "    \"instructions\": %" PRIu64 ",\n", sequential.instructions);
+        fprintf(out, "    \"cache_refs\": %" PRIu64 ",\n", sequential.cache_refs);
+        fprintf(out, "    \"cache_misses\": %" PRIu64 ",\n", sequential.cache_misses);
+        fprintf(out, "    \"miss_rate_pct\": %.2f\n", sequential.miss_rate);
+        fprintf(out, "  },\n");
+        fprintf(out, "  \"kv_random\": {\n");
+        fprintf(out, "    \"instructions\": %" PRIu64 ",\n", kv_random.instructions);
+        fprintf(out, "    \"cache_refs\": %" PRIu64 ",\n", kv_random.cache_refs);
+        fprintf(out, "    \"cache_misses\": %" PRIu64 ",\n", kv_random.cache_misses);
+        fprintf(out, "    \"miss_rate_pct\": %.2f\n", kv_random.miss_rate);
+        fprintf(out, "  },\n");
+        fprintf(out, "  \"evicted_kv\": {\n");
+        fprintf(out, "    \"instructions\": %" PRIu64 ",\n", evicted_kv.instructions);
+        fprintf(out, "    \"cache_refs\": %" PRIu64 ",\n", evicted_kv.cache_refs);
+        fprintf(out, "    \"cache_misses\": %" PRIu64 ",\n", evicted_kv.cache_misses);
+        fprintf(out, "    \"miss_rate_pct\": %.2f\n", evicted_kv.miss_rate);
+        fprintf(out, "  },\n");
         fprintf(out, "  \"note\": \"perf_event_open counters reflect userspace cache behavior, not GPU HBM control.\"\n");
         fprintf(out, "}\n");
         fclose(out);
