@@ -1,0 +1,127 @@
+From 6894bf0bb11873e83fca0dd2c3278da1da56f3d1 Mon Sep 17 00:00:00 2001
+From: Manish Klach <kv_deadline_scheduler>
+Date: Wed, 17 Jun 2026 13:03:00 -0700
+Subject: [PATCH 4/4] mm: vmscan: experimental intent-aware reclaim default
+ off
+
+Add a default-off reclaim hook that consults experimental memory intent.
+
+This patch is intentionally last in the series. It should not be enabled
+until registry, observability, and DAMON reporting have been validated on
+a pinned Linux version.
+
+Signed-off-by: Manish Klach <kv_deadline_scheduler>
+---
+ include/linux/memory_intent.h |  2 ++
+ mm/Kconfig                    |  7 ++++++
+ mm/memory_intent.c            | 13 ++++++++++++
+ mm/vmscan.c                   | 16 ++++++++++++++++
+ 4 files changed, 38 insertions(+)
+
+diff --git a/include/linux/memory_intent.h b/include/linux/memory_intent.h
+index 8c70d2346d84..c761df4d85d3 100644
+--- a/include/linux/memory_intent.h
++++ b/include/linux/memory_intent.h
+@@ -23,6 +23,8 @@ struct memory_intent_region {
+ 	struct rcu_head rcu;
+ };
+ 
++bool memory_intent_reclaim_enabled(void);
++
+ #ifdef CONFIG_EXPERIMENTAL_MEMORY_INTENT
+ int memory_intent_register(struct memory_intent_region *region);
+ void memory_intent_unregister(pid_t pid, unsigned long start_vaddr);
+diff --git a/mm/Kconfig b/mm/Kconfig
+index 15c00c842ce0..46d28a349a1c 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -1253,6 +1253,13 @@ config EXPERIMENTAL_MEMORY_INTENT_PROC
+ 	help
+ 	  Expose registered memory-intent regions through proc for research.
+ 
++config EXPERIMENTAL_MEMORY_INTENT_RECLAIM
++	bool "Experimental memory intent reclaim policy"
++	depends on EXPERIMENTAL_MEMORY_INTENT
++	help
++	  Experimental, default-off reclaim policy hook. Enable only after
++	  the observability path has been validated.
++
+ endmenu
+ 
+ menu "Memory Debugging"
+diff --git a/mm/memory_intent.c b/mm/memory_intent.c
+index 6676496e2fb1..9752493c52f1 100644
+--- a/mm/memory_intent.c
++++ b/mm/memory_intent.c
+@@ -5,6 +5,7 @@
+ #include <linux/rculist.h>
+ #include <linux/slab.h>
+ #include <linux/spinlock.h>
++#include <linux/static_key.h>
+ 
+ static LIST_HEAD(memory_intent_regions);
+ static DEFINE_SPINLOCK(memory_intent_lock);
+@@ -12,6 +13,8 @@ static DEFINE_SPINLOCK(memory_intent_lock);
+ static void memory_intent_free_rcu(struct rcu_head *rcu)
+ {
+ 	struct memory_intent_region *region =
+ 		container_of(rcu, struct memory_intent_region, rcu);
+@@ -19,6 +22,16 @@ static void memory_intent_free_rcu(struct rcu_head *rcu)
+ 	kfree(region);
+ }
+ 
++#ifdef CONFIG_EXPERIMENTAL_MEMORY_INTENT_RECLAIM
++DEFINE_STATIC_KEY_FALSE(memory_intent_reclaim_key);
++#endif
++
++bool memory_intent_reclaim_enabled(void)
++{
++#ifdef CONFIG_EXPERIMENTAL_MEMORY_INTENT_RECLAIM
++	return static_branch_unlikely(&memory_intent_reclaim_key);
++#else
++	return false;
++#endif
++}
++
+ int memory_intent_register(struct memory_intent_region *region)
+ {
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 94d0f5c1dc80..a27902c2b1f8 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -29,6 +29,7 @@
+ #include <linux/memcontrol.h>
+ #include <linux/mm_inline.h>
+ #include <linux/mmu_notifier.h>
++#include <linux/memory_intent.h>
+ #include <linux/page_idle.h>
+ #include <linux/page_owner.h>
+ #include <linux/pagevec.h>
+@@ -1508,6 +1509,7 @@ static unsigned int shrink_page_list(struct list_head *page_list,
+ 	LIST_HEAD(ret_pages);
+ 	LIST_HEAD(free_pages);
+ 	unsigned int nr_reclaimed = 0;
++	const struct memory_intent_region *intent;
+ 
+ 	cond_resched();
+ 
+@@ -1578,6 +1580,20 @@ static unsigned int shrink_page_list(struct list_head *page_list,
+ 		if (!sc->may_unmap && page_mapped(page))
+ 			goto keep_locked;
+ 
++		if (memory_intent_reclaim_enabled()) {
++			intent = memory_intent_lookup(current->pid,
++						      page_address(page) ?
++						      (unsigned long)page_address(page) :
++						      0);
++			if (intent &&
++			    intent->priority == MM_INTENT_LATENCY_CRITICAL &&
++			    !sc->may_swap)
++				goto keep_locked;
++		}
++
+ 		if (PageWriteback(page)) {
+ 			/*
+ 			 * Page is dirty and under writeback but we can still try
+-- 
+2.47.0

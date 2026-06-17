@@ -1,0 +1,201 @@
+From 5edcf4b6d7c8b64e464c301e16df10f548cce601 Mon Sep 17 00:00:00 2001
+From: Manish Klach <kv_deadline_scheduler>
+Date: Wed, 17 Jun 2026 13:00:00 -0700
+Subject: [PATCH 1/4] mm: add experimental memory intent registry
+
+Add an experimental memory-intent registry for observability-first Linux
+MM research.
+
+The registry is workload-neutral. Userspace workloads such as long-context
+LLM serving may map their own semantics onto generic classes such as
+LATENCY_CRITICAL, RECLAIMABLE, PREFETCHABLE, RECOMPUTE_OK, and
+BACKGROUND.
+
+This first patch adds the registry only. It does not change reclaim
+behavior.
+
+Signed-off-by: Manish Klach <kv_deadline_scheduler>
+---
+ include/linux/memory_intent.h |  42 +++++++++++++
+ mm/Kconfig                    |  13 ++++
+ mm/Makefile                   |   1 +
+ mm/memory_intent.c            | 101 ++++++++++++++++++++++++++++++++
+ 4 files changed, 157 insertions(+)
+ create mode 100644 include/linux/memory_intent.h
+ create mode 100644 mm/memory_intent.c
+
+diff --git a/include/linux/memory_intent.h b/include/linux/memory_intent.h
+new file mode 100644
+index 000000000000..8c70d2346d84
+--- /dev/null
++++ b/include/linux/memory_intent.h
+@@ -0,0 +1,42 @@
++#ifndef _LINUX_MEMORY_INTENT_H
++#define _LINUX_MEMORY_INTENT_H
++
++#include <linux/ktime.h>
++#include <linux/list.h>
++#include <linux/rcu.h>
++#include <linux/types.h>
++
++#define MM_INTENT_RECLAIMABLE      0
++#define MM_INTENT_BACKGROUND       1
++#define MM_INTENT_PREFETCHABLE     2
++#define MM_INTENT_RECOMPUTE_OK     3
++#define MM_INTENT_LATENCY_CRITICAL 4
++
++struct memory_intent_region {
++	struct list_head node;
++	pid_t pid;
++	unsigned long start_vaddr;
++	unsigned long length;
++	u64 intent_flags;
++	ktime_t deadline_ns;
++	int priority;
++	struct rcu_head rcu;
++};
++
++#ifdef CONFIG_EXPERIMENTAL_MEMORY_INTENT
++int memory_intent_register(struct memory_intent_region *region);
++void memory_intent_unregister(pid_t pid, unsigned long start_vaddr);
++const struct memory_intent_region *memory_intent_lookup(pid_t pid,
++							unsigned long vaddr);
++#else
++static inline int memory_intent_register(struct memory_intent_region *r) { return 0; }
++static inline void memory_intent_unregister(pid_t pid, unsigned long start_vaddr) {}
++static inline const struct memory_intent_region *memory_intent_lookup(pid_t pid,
++							      unsigned long vaddr)
++{
++	return NULL;
++}
++#endif
++
++#endif /* _LINUX_MEMORY_INTENT_H */
+diff --git a/mm/Kconfig b/mm/Kconfig
+index 18af73bbcc1e..e89c1ce9ef63 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -1234,6 +1234,19 @@ config ANON_VMA_NAME
+ 	  Allow anonymous memory mappings to be named.  This is useful when
+ 	  debugging userspace allocators and memory pressure behavior.
+ 
++config EXPERIMENTAL_MEMORY_INTENT
++	bool "Experimental memory intent registry"
++	depends on MMU
++	help
++	  Add a workload-neutral advisory registry for virtual-address ranges.
++
++	  This option is intended for research and observability. It does not
++	  change reclaim behavior by itself.
++
++	  Example users include long-context LLM runtimes, database buffer
++	  pools, and other userspace allocators that understand their own
++	  latency and recompute costs better than the kernel does.
++
+ endmenu
+ 
+ menu "Memory Debugging"
+diff --git a/mm/Makefile b/mm/Makefile
+index b92eb5c64548..8c24c9dc7603 100644
+--- a/mm/Makefile
++++ b/mm/Makefile
+@@ -111,6 +111,7 @@ obj-$(CONFIG_PAGE_REPORTING) += page_reporting.o
+ obj-$(CONFIG_MEMORY_FAILURE) += memory-failure.o
+ obj-$(CONFIG_HWPOISON_INJECT) += hwpoison-inject.o
+ obj-$(CONFIG_PER_VMA_LOCK_STATS) += per_vma_lock_stats.o
++obj-$(CONFIG_EXPERIMENTAL_MEMORY_INTENT) += memory_intent.o
+ 
+ KCOV_INSTRUMENT_mm-ksm.o := n
+ KASAN_SANITIZE_khugepaged.o := n
+diff --git a/mm/memory_intent.c b/mm/memory_intent.c
+new file mode 100644
+index 000000000000..6676496e2fb1
+--- /dev/null
++++ b/mm/memory_intent.c
+@@ -0,0 +1,101 @@
++// SPDX-License-Identifier: GPL-2.0
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/memory_intent.h>
++#include <linux/rculist.h>
++#include <linux/slab.h>
++#include <linux/spinlock.h>
++
++static LIST_HEAD(memory_intent_regions);
++static DEFINE_SPINLOCK(memory_intent_lock);
++
++static void memory_intent_free_rcu(struct rcu_head *rcu)
++{
++	struct memory_intent_region *region =
++		container_of(rcu, struct memory_intent_region, rcu);
++
++	kfree(region);
++}
++
++int memory_intent_register(struct memory_intent_region *region)
++{
++	struct memory_intent_region *entry;
++	unsigned long flags;
++
++	if (!region || !region->length)
++		return -EINVAL;
++
++	entry = kmemdup(region, sizeof(*entry), GFP_KERNEL);
++	if (!entry)
++		return -ENOMEM;
++
++	spin_lock_irqsave(&memory_intent_lock, flags);
++	list_add_tail_rcu(&entry->node, &memory_intent_regions);
++	spin_unlock_irqrestore(&memory_intent_lock, flags);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(memory_intent_register);
++
++void memory_intent_unregister(pid_t pid, unsigned long start_vaddr)
++{
++	struct memory_intent_region *entry, *tmp;
++	unsigned long flags;
++
++	spin_lock_irqsave(&memory_intent_lock, flags);
++	list_for_each_entry_safe(entry, tmp, &memory_intent_regions, node) {
++		if (entry->pid == pid && entry->start_vaddr == start_vaddr) {
++			list_del_rcu(&entry->node);
++			call_rcu(&entry->rcu, memory_intent_free_rcu);
++			break;
++		}
++	}
++	spin_unlock_irqrestore(&memory_intent_lock, flags);
++}
++EXPORT_SYMBOL_GPL(memory_intent_unregister);
++
++const struct memory_intent_region *memory_intent_lookup(pid_t pid,
++							unsigned long vaddr)
++{
++	const struct memory_intent_region *entry;
++
++	rcu_read_lock();
++	list_for_each_entry_rcu(entry, &memory_intent_regions, node) {
++		if (entry->pid != pid)
++			continue;
++		if (vaddr >= entry->start_vaddr &&
++		    vaddr < entry->start_vaddr + entry->length) {
++			rcu_read_unlock();
++			return entry;
++		}
++	}
++	rcu_read_unlock();
++	return NULL;
++}
++EXPORT_SYMBOL_GPL(memory_intent_lookup);
++
++static int __init memory_intent_init(void)
++{
++	pr_info("experimental memory_intent registry initialized\n");
++	return 0;
++}
++
++subsys_initcall(memory_intent_init);
+-- 
+2.47.0
+

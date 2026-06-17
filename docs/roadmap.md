@@ -27,3 +27,11 @@ This roadmap is organized around the staged research arc of KV Deadline Schedule
 - Add a cgroup I/O class experiment
 - Advisory scheduler
 - Only then consider kernel patches for intent-aware reclaim or tiering
+
+## Next Kernel Patch Steps
+
+- Consolidate `mm_kv_intent` into generic `mm_intent_rfc`
+- Make patch 1 compile on a pinned Linux version
+- Add `smaps` or `debugfs` observability before policy changes
+- Add DAMON reporting integration for memory-intent visibility
+- Postpone reclaim behavior changes until observability is validated

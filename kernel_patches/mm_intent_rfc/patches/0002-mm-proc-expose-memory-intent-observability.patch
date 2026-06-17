@@ -1,0 +1,124 @@
+From 8757808030e5749b21ea8cbdf328d7af95c45eb2 Mon Sep 17 00:00:00 2001
+From: Manish Klach <kv_deadline_scheduler>
+Date: Wed, 17 Jun 2026 13:01:00 -0700
+Subject: [PATCH 2/4] mm: proc: expose memory intent observability
+
+Expose registered memory-intent regions through a proc-oriented
+observability path.
+
+This patch intentionally focuses on observability and keeps policy out of
+scope. A future design may choose `debugfs`, `smaps`, or another interface,
+but the goal here is to make intent visible for measurement before reclaim
+behavior changes are introduced.
+
+Signed-off-by: Manish Klach <kv_deadline_scheduler>
+---
+ mm/Kconfig          |  6 ++++++
+ mm/Makefile         |  1 +
+ mm/memory_intent_fs.c | 74 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 81 insertions(+)
+ create mode 100644 mm/memory_intent_fs.c
+
+diff --git a/mm/Kconfig b/mm/Kconfig
+index e89c1ce9ef63..15c00c842ce0 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -1247,6 +1247,12 @@ config EXPERIMENTAL_MEMORY_INTENT
+ 	  Example users include long-context LLM runtimes, database buffer
+ 	  pools, and other userspace allocators that understand their own
+ 	  latency and recompute costs better than the kernel does.
++
++config EXPERIMENTAL_MEMORY_INTENT_PROC
++	bool "Experimental memory intent proc observability"
++	depends on EXPERIMENTAL_MEMORY_INTENT && PROC_FS
++	help
++	  Expose registered memory-intent regions through proc for research.
+diff --git a/mm/Makefile b/mm/Makefile
+index 8c24c9dc7603..dc2ef4d901a7 100644
+--- a/mm/Makefile
++++ b/mm/Makefile
+@@ -112,6 +112,7 @@ obj-$(CONFIG_MEMORY_FAILURE) += memory-failure.o
+ obj-$(CONFIG_HWPOISON_INJECT) += hwpoison-inject.o
+ obj-$(CONFIG_PER_VMA_LOCK_STATS) += per_vma_lock_stats.o
+ obj-$(CONFIG_EXPERIMENTAL_MEMORY_INTENT) += memory_intent.o
++obj-$(CONFIG_EXPERIMENTAL_MEMORY_INTENT_PROC) += memory_intent_fs.o
+ 
+ KCOV_INSTRUMENT_mm-ksm.o := n
+ KASAN_SANITIZE_khugepaged.o := n
+diff --git a/mm/memory_intent_fs.c b/mm/memory_intent_fs.c
+new file mode 100644
+index 000000000000..cf23ffaf531e
+--- /dev/null
++++ b/mm/memory_intent_fs.c
+@@ -0,0 +1,74 @@
++// SPDX-License-Identifier: GPL-2.0
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/memory_intent.h>
++#include <linux/proc_fs.h>
++#include <linux/seq_file.h>
++
++static int memory_intent_status_show(struct seq_file *m, void *v)
++{
++	seq_puts(m,
++		 "{\"note\":\"observability skeleton; hook iteration into registry before claiming runtime support\"}\n");
++	return 0;
++}
++
++static int memory_intent_status_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, memory_intent_status_show, NULL);
++}
++
++static ssize_t memory_intent_register_write(struct file *file,
++					   const char __user *buffer,
++					   size_t count, loff_t *ppos)
++{
++	return -EOPNOTSUPP;
++}
++
++static ssize_t memory_intent_unregister_write(struct file *file,
++					     const char __user *buffer,
++					     size_t count, loff_t *ppos)
++{
++	return -EOPNOTSUPP;
++}
++
++static const struct proc_ops memory_intent_status_ops = {
++	.proc_open = memory_intent_status_open,
++	.proc_read = seq_read,
++	.proc_lseek = seq_lseek,
++	.proc_release = single_release,
++};
++
++static const struct proc_ops memory_intent_register_ops = {
++	.proc_write = memory_intent_register_write,
++};
++
++static const struct proc_ops memory_intent_unregister_ops = {
++	.proc_write = memory_intent_unregister_write,
++};
++
++static int __init memory_intent_proc_init(void)
++{
++	struct proc_dir_entry *root;
++
++	root = proc_mkdir("memory_intent", NULL);
++	if (!root)
++		return -ENOMEM;
++
++	if (!proc_create("status", 0444, root, &memory_intent_status_ops))
++		return -ENOMEM;
++	if (!proc_create("register", 0200, root, &memory_intent_register_ops))
++		return -ENOMEM;
++	if (!proc_create("unregister", 0200, root, &memory_intent_unregister_ops))
++		return -ENOMEM;
++
++	pr_info("experimental memory_intent proc observability initialized\n");
++	return 0;
++}
++
++fs_initcall(memory_intent_proc_init);
+-- 
+2.47.0
+

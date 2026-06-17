@@ -1,0 +1,92 @@
+From c74a543c15b82036001df71f8b60c461aa8cb1e0 Mon Sep 17 00:00:00 2001
+From: Manish Klach <kv_deadline_scheduler>
+Date: Wed, 17 Jun 2026 13:02:00 -0700
+Subject: [PATCH 3/4] mm: damon: report memory intent for monitored regions
+
+Add a DAMON reporting hook for memory-intent-aware observability.
+
+This patch is intentionally observational. It is meant to let DAMON
+hotness signals be compared against userspace-supplied memory intent
+before any reclaim policy changes are enabled.
+
+Signed-off-by: Manish Klach <kv_deadline_scheduler>
+---
+ include/trace/events/memory_intent.h | 31 +++++++++++++++++++
+ mm/damon/core.c                      | 16 ++++++++++
+ 2 files changed, 47 insertions(+)
+ create mode 100644 include/trace/events/memory_intent.h
+
+diff --git a/include/trace/events/memory_intent.h b/include/trace/events/memory_intent.h
+new file mode 100644
+index 000000000000..ee41c23b260c
+--- /dev/null
++++ b/include/trace/events/memory_intent.h
+@@ -0,0 +1,31 @@
++#undef TRACE_SYSTEM
++#define TRACE_SYSTEM memory_intent
++
++#if !defined(_TRACE_MEMORY_INTENT_H) || defined(TRACE_HEADER_MULTI_READ)
++#define _TRACE_MEMORY_INTENT_H
++
++#include <linux/tracepoint.h>
++
++TRACE_EVENT(memory_intent_region_observed,
++	TP_PROTO(pid_t pid, unsigned long start, unsigned long end,
++		 unsigned int nr_accesses, int priority),
++	TP_ARGS(pid, start, end, nr_accesses, priority),
++	TP_STRUCT__entry(
++		__field(pid_t, pid)
++		__field(unsigned long, start)
++		__field(unsigned long, end)
++		__field(unsigned int, nr_accesses)
++		__field(int, priority)
++	),
++	TP_fast_assign(
++		__entry->pid = pid;
++		__entry->start = start;
++		__entry->end = end;
++		__entry->nr_accesses = nr_accesses;
++		__entry->priority = priority;
++	),
++	TP_printk("pid=%d [%lx-%lx] nr_acc=%u prio=%d",
++		  __entry->pid, __entry->start, __entry->end,
++		  __entry->nr_accesses, __entry->priority)
++);
++
++#endif
+diff --git a/mm/damon/core.c b/mm/damon/core.c
+index 9bdccf0b145e..5ecda9742517 100644
+--- a/mm/damon/core.c
++++ b/mm/damon/core.c
+@@ -22,6 +22,8 @@
+ #include <linux/random.h>
+ #include <linux/rbtree.h>
+ #include <linux/slab.h>
++#include <linux/memory_intent.h>
++#include <trace/events/memory_intent.h>
+ 
+ static bool damon_target_valid(struct damon_target *t);
+ static void damon_commit_ctx(struct damon_ctx *c);
+@@ -1914,6 +1916,20 @@ static void damos_walk(struct damon_ctx *ctx, struct damon_target *t,
+ 			continue;
+ 		}
+ 
++		if (t->id) {
++			const struct memory_intent_region *intent;
++
++			intent = memory_intent_lookup((pid_t)t->id, r->ar.start);
++			if (intent)
++				trace_memory_intent_region_observed(
++					(pid_t)t->id,
++					r->ar.start,
++					r->ar.end,
++					r->nr_accesses,
++					intent->priority);
++		}
++
+ 		damos_apply_scheme(ctx, t, r, s, &sz_applied);
+ 	}
+ }
+-- 
+2.47.0
+
