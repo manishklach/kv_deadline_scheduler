@@ -29,19 +29,20 @@ hard to obtain.
 Changes from earlier version:
   - Replace flat linked list with an interval tree for O(log n) range lookups
   - Rename struct memory_intent_entry -> memory_intent_region
-  - Add memory_intent_register() / memory_intent_unregister() / memory_intent_lookup()
-    / memory_intent_dump_seq() as the core API expected by subsequent patches
+  - Add memory_intent_register() / memory_intent_unregister() /
+    memory_intent_lookup_attrs() / memory_intent_dump_seq() as the core API
+    expected by subsequent patches
   - Add struct rcu_head to memory_intent_region for future RCU-safe readers
 
 This patch was compile-tested on Linux 6.8.12 and smoke-tested in QEMU
 with a successful debugfs register and dump cycle.
 
 ---
- include/linux/memory_intent.h |  58 +++++++++++
+ include/linux/memory_intent.h |  68 +++++++++++++
  mm/Kconfig                    |  14 +++
  mm/Makefile                   |   1 +
- mm/memory_intent.c            | 249 ++++++++++++++++++++++++++++++++++++++++++
- 4 files changed, 322 insertions(+)
+ mm/memory_intent.c            | 262 +++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 345 insertions(+)
  create mode 100644 include/linux/memory_intent.h
  create mode 100644 mm/memory_intent.c
 
@@ -50,7 +51,7 @@ new file mode 100644
 index 000000000..b7c3d1f08
 --- /dev/null
 +++ b/include/linux/memory_intent.h
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,68 @@
 +#ifndef _LINUX_MEMORY_INTENT_H
 +#define _LINUX_MEMORY_INTENT_H
 +
@@ -72,6 +73,12 @@ index 000000000..b7c3d1f08
 +#define MM_INTENT_RECOMPUTE_OK		0x8
 +#define MM_INTENT_BACKGROUND		0x10
 +
++struct memory_intent_attrs {
++	u64				intent_flags;
++	u64				deadline_ns;
++	u32				priority;
++};
++
 +/*
 + * One region represents a virtual-address range tagged with intent
 + * metadata.  Regions are tracked in a global interval tree keyed by
@@ -89,8 +96,8 @@ index 000000000..b7c3d1f08
 +#ifdef CONFIG_EXPERIMENTAL_MEMORY_INTENT
 +int memory_intent_register(struct memory_intent_region *region);
 +void memory_intent_unregister(pid_t pid, unsigned long start_vaddr);
-+struct memory_intent_region *
-+memory_intent_lookup(pid_t pid, unsigned long vaddr);
++bool memory_intent_lookup_attrs(pid_t pid, unsigned long vaddr,
++				struct memory_intent_attrs *out);
 +int memory_intent_dump_seq(struct seq_file *m);
 +int memory_intent_init_debugfs(void);
 +void memory_intent_exit_debugfs(void);
@@ -100,8 +107,11 @@ index 000000000..b7c3d1f08
 +	return -ENOSYS;
 +}
 +static inline void memory_intent_unregister(pid_t pid, unsigned long start_vaddr) {}
-+static inline struct memory_intent_region *
-+memory_intent_lookup(pid_t pid, unsigned long vaddr) { return NULL; }
++static inline bool memory_intent_lookup_attrs(pid_t pid, unsigned long vaddr,
++					      struct memory_intent_attrs *out)
++{
++	return false;
++}
 +static inline int memory_intent_dump_seq(struct seq_file *m) { return 0; }
 +static inline int memory_intent_init_debugfs(void) { return 0; }
 +static inline void memory_intent_exit_debugfs(void) {}
@@ -150,7 +160,7 @@ new file mode 100644
 index 000000000..e4a6b2f8d
 --- /dev/null
 +++ b/mm/memory_intent.c
-@@ -0,0 +1,249 @@
+@@ -0,0 +1,262 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * RFC v0 experimental memory-intent registry.
@@ -159,9 +169,9 @@ index 000000000..e4a6b2f8d
 + * pinned Linux 6.8.y validation target. It does not change reclaim behavior.
 + *
 + * Regions are stored in a global interval tree (rbtree-based) for efficient
-+ * range lookup.  Write-side serialization uses a single mutex; readers
-+ * (memory_intent_lookup) return a pointer under the same lock.  A future
-+ * version should switch to RCU for lock-free readers.
++ * range lookup.  Write-side serialization uses a single mutex.  Lookup
++ * returns a copied attribute snapshot instead of a raw pointer so callers
++ * do not observe freed regions after the mutex is dropped.
 + */
 +
 +#include <linux/debugfs.h>
@@ -214,8 +224,8 @@ index 000000000..e4a6b2f8d
 +	mutex_unlock(&memory_intent_lock);
 +}
 +
-+struct memory_intent_region *
-+memory_intent_lookup(pid_t pid, unsigned long vaddr)
++bool memory_intent_lookup_attrs(pid_t pid, unsigned long vaddr,
++				struct memory_intent_attrs *out)
 +{
 +	struct memory_intent_region *region;
 +	struct interval_tree_node *node;
@@ -225,13 +235,18 @@ index 000000000..e4a6b2f8d
 +	while (node) {
 +		region = container_of(node, struct memory_intent_region, node);
 +		if (region->pid == pid) {
++			if (out) {
++				out->intent_flags = region->intent_flags;
++				out->deadline_ns = region->deadline_ns;
++				out->priority = region->priority;
++			}
 +			mutex_unlock(&memory_intent_lock);
-+			return region;
++			return true;
 +		}
 +		node = interval_tree_iter_next(node, vaddr, vaddr);
 +	}
 +	mutex_unlock(&memory_intent_lock);
-+	return NULL;
++	return false;
 +}
 +
 +int memory_intent_dump_seq(struct seq_file *m)

@@ -20,7 +20,7 @@ Milestone:
 ## Build Steps
 
 1. Clone a Linux `6.8.y` tree
-2. Apply all four patches in order:
+2. Apply the patch series in order:
 
 ```bash
 git am ../kernel_patches/mm_intent_rfc/patches/*.patch
@@ -28,7 +28,7 @@ git am ../kernel_patches/mm_intent_rfc/patches/*.patch
 
 3. Enable `CONFIG_DEBUG_FS`
 4. Enable `CONFIG_EXPERIMENTAL_MEMORY_INTENT` and `CONFIG_EXPERIMENTAL_MEMORY_INTENT_PROC` if the patches add them
-5. (Optional) Enable `CONFIG_EXPERIMENTAL_MEMORY_INTENT_RECLAIM` for reclaim experiments -- default-off by design
+5. (Optional) Enable `CONFIG_EXPERIMENTAL_MEMORY_INTENT_RECLAIM` only for compile validation of the scaffolding path. Patch `0004` does not yet implement a trustworthy reclaim decision path.
 6. Build the kernel
 7. Boot under QEMU or on a dedicated test machine
 
@@ -40,6 +40,12 @@ Helper scripts in this repository:
 - `scripts/qemu_smoke_boot.sh <linux-tree>`
 
 The smoke boot helper builds a tiny initramfs, boots the patched kernel in QEMU, mounts `debugfs`, writes one registration line for PID `1`, and prints the resulting `dump` output.
+
+Current honest scope:
+
+- patch `0001` has been compile-targeted and smoke-validated in QEMU
+- later patches are RFC material and should be treated as staged research artifacts
+- reclaim behavior should not be claimed as validated from this series yet
 
 ## Runtime Setup
 

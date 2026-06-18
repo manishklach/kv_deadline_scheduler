@@ -19,7 +19,7 @@ Do not treat the RFC patches as version-agnostic until they are validated agains
 6. Tag regions from `kv_madvise_experiment`
 7. Confirm `smaps`, proc, or `debugfs` observability reports intent
 8. Run the DAMON workload and confirm intent appears alongside hot/cold observations
-9. Only then enable the default-off reclaim policy patch
+9. Only then evaluate the default-off reclaim scaffolding patch
 
 ## Phase 1
 
@@ -52,7 +52,10 @@ Current status:
 
 ## Phase 4 Later
 
-- default-off reclaim policy
+- default-off reclaim scaffolding
+- design a trustworthy owner-attribution path
+- design reverse mapping from `struct page` to registered userspace VMA or range
+- add an explicit runtime enable and validation path before any reclaim decision changes
 
 ## Success Criteria
 
@@ -60,4 +63,4 @@ Current status:
 - userspace can register memory intent by virtual-address range
 - observability path shows registered intent without changing reclaim
 - DAMON reporting can correlate hotness with intent
-- reclaim policy remains disabled by default until measurements justify enabling it
+- reclaim behavior remains unchanged until owner attribution, reverse mapping, and runtime enable controls are validated

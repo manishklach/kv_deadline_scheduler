@@ -52,9 +52,11 @@ KV Deadline Scheduler can map:
 1. Registry only
 2. Observability through proc, `smaps`, or `debugfs`
 3. DAMON reporting integration
-4. Optional reclaim policy, default off
+4. Optional reclaim scaffolding, default off
 
-That order is intentional. Observability comes first. Reclaim behavior change comes last.
+That order is intentional. Observability comes first. Actual reclaim behavior change comes last.
+
+Patch `0004` is currently scaffolding only. It keeps the enable-state plumbing compile-targeted, but it does not yet make reclaim decisions because owner attribution and reverse mapping from `struct page` to registered userspace ranges are still unresolved research problems.
 
 ## Preferred Interface Direction
 

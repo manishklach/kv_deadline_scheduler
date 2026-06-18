@@ -41,11 +41,17 @@ struct memory_intent_region {
 	struct rcu_head			rcu;
 };
 
+struct memory_intent_attrs {
+	u64				intent_flags;
+	u64				deadline_ns;
+	u32				priority;
+};
+
 #ifdef CONFIG_EXPERIMENTAL_MEMORY_INTENT
 int memory_intent_register(struct memory_intent_region *region);
 void memory_intent_unregister(pid_t pid, unsigned long start_vaddr);
-struct memory_intent_region *
-memory_intent_lookup(pid_t pid, unsigned long vaddr);
+bool memory_intent_lookup_attrs(pid_t pid, unsigned long vaddr,
+				struct memory_intent_attrs *out);
 int memory_intent_dump_seq(struct seq_file *m);
 int memory_intent_init_debugfs(void);
 void memory_intent_exit_debugfs(void);
@@ -55,8 +61,11 @@ static inline int memory_intent_register(struct memory_intent_region *region)
 	return -ENOSYS;
 }
 static inline void memory_intent_unregister(pid_t pid, unsigned long start_vaddr) {}
-static inline struct memory_intent_region *
-memory_intent_lookup(pid_t pid, unsigned long vaddr) { return NULL; }
+static inline bool memory_intent_lookup_attrs(pid_t pid, unsigned long vaddr,
+					      struct memory_intent_attrs *out)
+{
+	return false;
+}
 static inline int memory_intent_dump_seq(struct seq_file *m) { return 0; }
 static inline int memory_intent_init_debugfs(void) { return 0; }
 static inline void memory_intent_exit_debugfs(void) {}
@@ -112,8 +121,9 @@ cat > mm/memory_intent.c <<'SOURCE_EOF'
  * RFC v0 experimental memory-intent registry.
  *
  * Regions are stored in a global interval tree (rbtree-based) for efficient
- * range lookup.  Write-side serialization uses a single mutex; readers
- * (memory_intent_lookup) return a pointer under the same lock.
+ * range lookup.  Write-side serialization uses a single mutex.  Lookups
+ * copy attributes out under the lock so callers do not hold raw pointers
+ * after unlock.
  */
 #include <linux/debugfs.h>
 #include <linux/init.h>
@@ -162,8 +172,8 @@ void memory_intent_unregister(pid_t pid, unsigned long start_vaddr)
 	mutex_unlock(&memory_intent_lock);
 }
 
-struct memory_intent_region *
-memory_intent_lookup(pid_t pid, unsigned long vaddr)
+bool memory_intent_lookup_attrs(pid_t pid, unsigned long vaddr,
+				struct memory_intent_attrs *out)
 {
 	struct memory_intent_region *region;
 	struct interval_tree_node *node;
@@ -173,13 +183,18 @@ memory_intent_lookup(pid_t pid, unsigned long vaddr)
 	while (node) {
 		region = container_of(node, struct memory_intent_region, node);
 		if (region->pid == pid) {
+			if (out) {
+				out->intent_flags = region->intent_flags;
+				out->deadline_ns = region->deadline_ns;
+				out->priority = region->priority;
+			}
 			mutex_unlock(&memory_intent_lock);
-			return region;
+			return true;
 		}
 		node = interval_tree_iter_next(node, vaddr, vaddr);
 	}
 	mutex_unlock(&memory_intent_lock);
-	return NULL;
+	return false;
 }
 
 int memory_intent_dump_seq(struct seq_file *m)

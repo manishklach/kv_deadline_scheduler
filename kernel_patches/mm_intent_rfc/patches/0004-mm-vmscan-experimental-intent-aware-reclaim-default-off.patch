@@ -1,51 +1,51 @@
 From 6894bf0bb11873e83fca0dd2c3278da1da56f3d1 Mon Sep 17 00:00:00 2001
 From: Manish Klach <kv_deadline_scheduler>
 Date: Wed, 17 Jun 2026 13:03:00 -0700
-Subject: [PATCH 4/4] mm: vmscan: experimental intent-aware reclaim default
- off
+Subject: [PATCH 4/4] mm: memory_intent: add reclaim scaffolding default off
 
-Add a default-off reclaim hook that consults experimental memory intent.
+Add default-off reclaim scaffolding for future intent-aware VM experiments.
 
 This patch is intentionally last in the series. It should not be enabled
 until registry, observability, and DAMON reporting have been validated on
 a pinned Linux version.
 
 Changes from earlier version:
-  - Fix intent check: use intent_flags bitmap (intent_flags & MM_INTENT_*)
-    instead of comparing priority field, since intent_flags is a bitmap
-    and MM_INTENT_LATENCY_CRITICAL is a flag bit
   - Add proper inline stubs for memory_intent_reclaim_enabled() in the
     CONFIG_EXPERIMENTAL_MEMORY_INTENT=n case
-  - Add known-limitation comment: page_address() returns a kernel linear
-    address, not a userspace virtual address, so the intent lookup in the
-    reclaim path is a research stub; a real implementation would need a
-    page-table walk or VMA-based reverse mapping
+  - Remove the provisional vmscan lookup stub because it used the
+    reclaiming task PID and a kernel linear address, neither of which
+    identifies the original userspace registration correctly
+  - Keep the series compile-targeted while documenting the real design
+    blockers for a future reclaim experiment: owner attribution, reverse
+    mapping from page to userspace VMA, and an explicit runtime enable path
 
 Signed-off-by: Manish Klach <kv_deadline_scheduler>
 ---
  include/linux/memory_intent.h |  2 ++
  mm/Kconfig                    |  7 +++++++
- mm/memory_intent.c            | 27 +++++++++++++++++++++++++++
- mm/vmscan.c                   | 20 ++++++++++++++++++++
- 4 files changed, 56 insertions(+)
+ mm/memory_intent.c            | 26 ++++++++++++++++++++++++++
+ 3 files changed, 35 insertions(+)
 
 diff --git a/include/linux/memory_intent.h b/include/linux/memory_intent.h
 index b7c3d1f08..c761df4d85 100644
 --- a/include/linux/memory_intent.h
 +++ b/include/linux/memory_intent.h
-@@ -38,6 +38,7 @@ int memory_intent_register(struct memory_intent_region *region);
+@@ -48,6 +48,7 @@ int memory_intent_register(struct memory_intent_region *region);
  void memory_intent_unregister(pid_t pid, unsigned long start_vaddr);
- struct memory_intent_region *
- memory_intent_lookup(pid_t pid, unsigned long vaddr);
+ bool memory_intent_lookup_attrs(pid_t pid, unsigned long vaddr,
+ 				struct memory_intent_attrs *out);
 +bool memory_intent_reclaim_enabled(void);
  int memory_intent_dump_seq(struct seq_file *m);
  int memory_intent_init_debugfs(void);
  void memory_intent_exit_debugfs(void);
-@@ -49,6 +50,7 @@ static inline void memory_intent_unregister(pid_t pid, unsigned long start_vaddr
- static inline struct memory_intent_region *
- memory_intent_lookup(pid_t pid, unsigned long vaddr) { return NULL; }
- static inline int memory_intent_dump_seq(struct seq_file *m) { return 0; }
+@@ -61,6 +62,7 @@ static inline void memory_intent_unregister(pid_t pid, unsigned long start_vaddr
+ static inline bool memory_intent_lookup_attrs(pid_t pid, unsigned long vaddr,
+ 					      struct memory_intent_attrs *out)
+ {
+ 	return false;
+ }
 +static inline bool memory_intent_reclaim_enabled(void) { return false; }
+ static inline int memory_intent_dump_seq(struct seq_file *m) { return 0; }
  static inline int memory_intent_init_debugfs(void) { return 0; }
  static inline void memory_intent_exit_debugfs(void) {}
  #endif
@@ -68,7 +68,7 @@ index 15c00c842c..46d28a349a 100644
  
  endmenu
 diff --git a/mm/memory_intent.c b/mm/memory_intent.c
-index e4a6b2f8d..c3f9d1e7b 100644
+index e4a6b2f8d..d7678fb0c 100644
 --- a/mm/memory_intent.c
 +++ b/mm/memory_intent.c
 @@ -24,6 +24,7 @@
@@ -86,7 +86,7 @@ index e4a6b2f8d..c3f9d1e7b 100644
  static struct dentry *memory_intent_dir;
  
  /*
-@@ -99,6 +107,26 @@ int memory_intent_dump_seq(struct seq_file *m)
+@@ -99,6 +107,25 @@ int memory_intent_dump_seq(struct seq_file *m)
  	return 0;
  }
  
@@ -99,55 +99,14 @@ index e4a6b2f8d..c3f9d1e7b 100644
 +#endif
 +}
 +
++/*
++ * RFC note: this patch intentionally stops at enable-state scaffolding.
++ * A real reclaim experiment needs a trustworthy mapping from struct page
++ * back to the owning userspace VMA and registered PID before intent can
++ * influence reclaim decisions.
++ */
  /*
   * Debugfs interface
   */
-diff --git a/mm/vmscan.c b/mm/vmscan.c
-index 94d0f5c1dc80..a27902c2b1f8 100644
---- a/mm/vmscan.c
-+++ b/mm/vmscan.c
-@@ -29,6 +29,7 @@
- #include <linux/memcontrol.h>
- #include <linux/mm_inline.h>
- #include <linux/mmu_notifier.h>
-+#include <linux/memory_intent.h>
- #include <linux/page_idle.h>
- #include <linux/page_owner.h>
- #include <linux/pagevec.h>
-@@ -1508,6 +1509,7 @@ static unsigned int shrink_page_list(struct list_head *page_list,
- 	LIST_HEAD(ret_pages);
- 	LIST_HEAD(free_pages);
- 	unsigned int nr_reclaimed = 0;
-+	const struct memory_intent_region *intent;
- 
- 	cond_resched();
- 
-@@ -1578,6 +1580,24 @@ static unsigned int shrink_page_list(struct list_head *page_list,
- 		if (!sc->may_unmap && page_mapped(page))
- 			goto keep_locked;
- 
-+		if (memory_intent_reclaim_enabled()) {
-+			/*
-+			 * NOTE: page_address() returns the kernel linear-map
-+			 * virtual address, not the userspace virtual address
-+			 * stored in the intent registry.  A correct lookup
-+			 * would need a page-table walk or VMA-based rmap.
-+			 *
-+			 * This is a research stub.  For experiments where
-+			 * the direct-map and user-space addresses coincide
-+			 * (e.g., simple test harnesses with MAP_FIXED), this
-+			 * may produce useful results.
-+			 */
-+			intent = memory_intent_lookup(current->pid,
-+				(unsigned long)page_address(page));
-+			if (intent &&
-+			    (intent->intent_flags & MM_INTENT_LATENCY_CRITICAL) &&
-+			    !sc->may_swap)
-+				goto keep_locked;
-+		}
-+
- 		if (PageWriteback(page)) {
- 			/*
- 			 * Page is dirty and under writeback but we can still try
 -- 
 2.47.0
