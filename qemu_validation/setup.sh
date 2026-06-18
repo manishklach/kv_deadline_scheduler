@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-KERNEL_URL="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.8.12.12.tar.xz"
+KERNEL_URL="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.8.12.tar.xz"
 BUILDROOT_URL="https://buildroot.org/downloads/buildroot-2024.02.tar.gz"
 
 for cmd in qemu-system-x86_64 gcc make curl tar git; do

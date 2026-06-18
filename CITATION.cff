@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use KV Deadline Scheduler in research, please cite this repository."
+title: "KV Deadline Scheduler"
+type: software
+authors:
+  - family-names: "Klach"
+    given-names: "Manish"
+repository-code: "https://github.com/manishklach/kv_deadline_scheduler"
+url: "https://manishklach.github.io/kv_deadline_scheduler/"
+abstract: >-
+  Deadline-aware KV-cache scheduling for protecting decode-critical request-state
+  under long-context LLM inference pressure.
+license: "MIT"
+version: "0.6.0"
+date-released: "2026-06-18"
+keywords:
+  - llm
+  - kv-cache
+  - inference
+  - long-context
+  - memory-tiering
+  - linux

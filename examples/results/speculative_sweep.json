@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "seed": 42,
+    "acceptance_rate": 0.7,
+    "tree_width": 4,
+    "tree_depth": 3,
+    "hbm_mb": 16,
+    "dram_mb": 256,
+    "generated_at": "2026-06-18T05:43:24.199640+00:00"
+  },
+  "results": [
+    {
+      "policy_name": "KVDeadline",
+      "committed_blocks": 38,
+      "freed_rejected_blocks": 46,
+      "wasted_hbm_mb_on_rejected_drafts": 0.0,
+      "p50_latency_us": 50.0,
+      "p95_latency_us": 250.0,
+      "p99_latency_us": 250.0,
+      "decode_critical_misses": 0,
+      "decode_critical_miss_rate": 0.0
+    },
+    {
+      "policy_name": "SpeculativeIntent",
+      "committed_blocks": 38,
+      "freed_rejected_blocks": 46,
+      "wasted_hbm_mb_on_rejected_drafts": 11.5,
+      "p50_latency_us": 50.0,
+      "p95_latency_us": 250.0,
+      "p99_latency_us": 250.0,
+      "decode_critical_misses": 0,
+      "decode_critical_miss_rate": 0.0
+    }
+  ]
+}
