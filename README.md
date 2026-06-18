@@ -19,6 +19,8 @@ KV Deadline Scheduler asks: "Which KV block belongs to decode-critical request-s
 
 The public project name is KV Deadline Scheduler. The prototype Python package is currently named `kv_memory_intent`.
 
+Project site: [manishklach.github.io/kv_deadline_scheduler](https://manishklach.github.io/kv_deadline_scheduler/)
+
 ![KV Deadline Scheduler architecture](docs/kv_deadline_scheduler_architecture.svg)
 
 _Architecture overview: external traces and telemetry are converted into KV lifecycle events, replayed through policy variants, and extended into a Linux-first I/O-priority research track._
